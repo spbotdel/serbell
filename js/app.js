@@ -20,7 +20,7 @@ const SUPABASE_ANON_KEY = 'sb_publishable_lFv-zgjejU0UX_imTSs_1g_ZukPZopY';
 const SUPABASE_BUCKET = 'family-media';
 const FAMILY_AUTH_EMAIL = 'family@serbell.local';
 
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /* ================= CONFIG ================= */
 const CARD_W = 230;
@@ -1110,7 +1110,7 @@ function setupUI() {
     if (adminBtn) {
         adminBtn.onclick = async () => {
             if (isAdmin) {
-                await supabase.auth.signOut();
+                await supabaseClient.auth.signOut();
                 return;
             }
 
@@ -1119,7 +1119,7 @@ function setupUI() {
             const password = prompt('Введите пароль') || '';
             if (!password) return;
 
-            const { error } = await supabase.auth.signInWithPassword({ email, password });
+            const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
             if (error) {
                 console.error('Auth error', error);
                 alert('Ошибка входа. Проверьте email/пароль.');
@@ -1256,14 +1256,14 @@ function getPhotoStoragePath(personId, filename) {
 async function loadPhotoData(personId) {
     if (!personId) return '';
     const safeId = String(personId || '').replace(/[^a-zA-Z0-9_-]/g, '_');
-    const { data, error } = await supabase
+    const { data, error } = await supabaseClient
         .storage
         .from(SUPABASE_BUCKET)
         .list(safeId, { limit: 1, offset: 0, sortBy: { column: 'name', order: 'desc' } });
 
     if (error || !data || data.length === 0) return '';
     const path = `${safeId}/${data[0].name}`;
-    const { data: publicData } = supabase.storage.from(SUPABASE_BUCKET).getPublicUrl(path);
+    const { data: publicData } = supabaseClient.storage.from(SUPABASE_BUCKET).getPublicUrl(path);
     return publicData?.publicUrl || '';
 }
 
@@ -1271,7 +1271,7 @@ async function savePhotoData(personId, file) {
     if (!personId || !file) return;
     const ext = String(file.name || '').split('.').pop() || 'jpg';
     const path = getPhotoStoragePath(personId, `photo.${ext}`);
-    const { error } = await supabase
+    const { error } = await supabaseClient
         .storage
         .from(SUPABASE_BUCKET)
         .upload(path, file, { upsert: true });
@@ -1336,10 +1336,10 @@ function updateSelectionStyles() {
 }
 
 async function initAuth() {
-    const { data } = await supabase.auth.getSession();
+    const { data } = await supabaseClient.auth.getSession();
     setAdminState(Boolean(data.session));
 
-    supabase.auth.onAuthStateChange((_event, session) => {
+    supabaseClient.auth.onAuthStateChange((_event, session) => {
         setAdminState(Boolean(session));
     });
 }
