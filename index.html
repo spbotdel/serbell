@@ -435,6 +435,31 @@
             margin-top: 10px;
         }
 
+        .photo-wrap {
+            width: 120px;
+            height: 120px;
+            border-radius: 20px;
+            overflow: hidden;
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            background: rgba(15, 23, 42, 0.04);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .photo-wrap img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .photo-placeholder {
+            font-size: 11px;
+            color: rgba(15, 23, 42, 0.5);
+            text-align: center;
+            padding: 6px;
+        }
+
         .section {
             margin-top: 14px;
         }
@@ -753,6 +778,7 @@
         let rootId = null;
         let rawGedText = '';
         let isAdmin = false;
+        let photoMap = {};
 
         let currentId = null;
         let focusRawId = null;
@@ -786,9 +812,11 @@
         const STORAGE_GED_KEY = 'serbell:ged';
         const STORAGE_ADMIN_KEY = 'serbell:admin';
         const STORAGE_UPDATED_KEY = 'serbell:ged:updatedAt';
+        const STORAGE_PHOTO_KEY = 'serbell:photos';
 
         /* ================= INIT ================= */
         isAdmin = localStorage.getItem(STORAGE_ADMIN_KEY) === '1';
+        photoMap = loadPhotoMap();
 
         loadGedSource()
             .then(t => {
@@ -817,6 +845,7 @@
             currentId = null;
             focusRawId = null;
             focusResolvedId = null;
+            cleanupPhotoMap();
             if (persist) {
                 localStorage.setItem(STORAGE_GED_KEY, rawGedText);
                 localStorage.setItem(STORAGE_UPDATED_KEY, new Date().toISOString());
@@ -833,6 +862,13 @@
                 .attr('height', h);
 
             g = svg.append('g');
+            const defs = svg.append('defs');
+            defs.append('clipPath')
+                .attr('id', 'avatarClip')
+                .append('circle')
+                .attr('cx', 26)
+                .attr('cy', 26)
+                .attr('r', 26);
 
             zoom = d3.zoom()
                 .scaleExtent([0.15, 3])
@@ -1274,6 +1310,18 @@
                 .attr('width', CARD_W).attr('height', CARD_H)
                 .attr('rx', 18);
 
+            const photo = getPhoto(p.id);
+            if (photo) {
+                const size = 52;
+                group.append('image')
+                    .attr('href', photo)
+                    .attr('x', -CARD_W / 2 + 12)
+                    .attr('y', -size / 2)
+                    .attr('width', size)
+                    .attr('height', size)
+                    .attr('clip-path', 'url(#avatarClip)');
+            }
+
             const lines = splitName3(p.name);
             const text = group.append('text')
                 .attr('text-anchor', 'middle')
@@ -1382,12 +1430,29 @@
             }
         }
 
+        function renderPhotoSection(personId) {
+            const photo = getPhoto(personId);
+            if (!photo) {
+                return `
+            <div class="photo-wrap">
+                <div class="photo-placeholder">Нет фото</div>
+            </div>`;
+            }
+            return `
+            <div class="photo-wrap">
+                <img src="${escapeHtml(photo)}" alt="Фото" />
+            </div>`;
+        }
+
         function renderAdminSection(person) {
             if (!isAdmin) return '';
             const updatedAt = localStorage.getItem(STORAGE_UPDATED_KEY);
             const updatedLabel = updatedAt ? new Date(updatedAt).toLocaleString('ru-RU') : '—';
             const fileInfo = rawGedText ? `${rawGedText.split(/\r?\n/).length} строк` : 'нет данных';
             const sexValue = person?.sex || '';
+            const photo = getPhoto(person?.id);
+            const disabled = person ? '' : 'disabled';
+            const addNote = person ? '' : '<div class="admin-note">Сначала выберите человека.</div>';
 
             const editForm = person ? `
             <form id="admin-edit-form" class="admin-card">
@@ -1411,6 +1476,16 @@
                 <div class="admin-row">
                     <label for="admin-death">Дата смерти</label>
                     <input id="admin-death" type="text" value="${escapeHtml(person?.death || '')}" placeholder="—" />
+                </div>
+                <div class="admin-row">
+                    <label for="admin-photo">Фото</label>
+                    <div class="photo-wrap">
+                        ${photo ? `<img src="${escapeHtml(photo)}" alt="Фото" />` : `<div class="photo-placeholder">Фото не загружено</div>`}
+                    </div>
+                    <input id="admin-photo" type="file" accept="image/*" />
+                    <div class="admin-actions">
+                        <button class="admin-btn secondary" type="button" id="admin-remove-photo">Удалить фото</button>
+                    </div>
                 </div>
                 <div class="admin-actions">
                     <button class="admin-btn" type="submit">Сохранить</button>
@@ -1439,6 +1514,49 @@
                         <button class="admin-btn secondary" type="button" id="admin-logout">Выйти</button>
                     </div>
                     <div class="admin-note">Текущее содержимое: ${fileInfo}. Последнее обновление: ${updatedLabel}</div>
+                </div>
+                <form id="admin-add-relative" class="admin-card">
+                    <div class="section-title">Добавить родственника</div>
+                    <div class="admin-row">
+                        <label for="admin-relation">Кем приходится</label>
+                        <select id="admin-relation" ${disabled}>
+                            <option value="child">Ребёнок</option>
+                            <option value="spouse">Супруг/супруга</option>
+                            <option value="parent">Родитель</option>
+                            <option value="sibling">Брат/сестра</option>
+                        </select>
+                    </div>
+                    <div class="admin-row">
+                        <label for="admin-new-name">ФИО</label>
+                        <input id="admin-new-name" type="text" placeholder="ФИО нового человека" ${disabled} />
+                    </div>
+                    <div class="admin-row">
+                        <label for="admin-new-sex">Пол</label>
+                        <select id="admin-new-sex" ${disabled}>
+                            <option value="">—</option>
+                            <option value="M">Мужской</option>
+                            <option value="F">Женский</option>
+                        </select>
+                    </div>
+                    <div class="admin-row">
+                        <label for="admin-new-birth">Дата рождения</label>
+                        <input id="admin-new-birth" type="text" placeholder="например, 1985" ${disabled} />
+                    </div>
+                    <div class="admin-row">
+                        <label for="admin-new-death">Дата смерти</label>
+                        <input id="admin-new-death" type="text" placeholder="—" ${disabled} />
+                    </div>
+                    <div class="admin-actions">
+                        <button class="admin-btn" type="submit" ${disabled}>Добавить</button>
+                    </div>
+                    ${addNote}
+                </form>
+                <div class="admin-card">
+                    <div class="section-title">Удаление</div>
+                    <div class="admin-note">Удаление человека удалит его из всех семейных связей.</div>
+                    <div class="admin-actions">
+                        <button class="admin-btn secondary" type="button" id="admin-delete-person" ${disabled}>Удалить выбранного</button>
+                    </div>
                 </div>
                 ${editForm}
             </div>`;
@@ -1556,12 +1674,14 @@
                 const b = formatGedcomDate(p?.birth || '');
                 const d = formatGedcomDate(p?.death || '');
                 const sex = (p?.sex === 'M') ? 'Мужчина' : (p?.sex === 'F') ? 'Женщина' : '—';
+                const photoMarkup = renderPhotoSection(p?.id);
 
                 const siblings = getSiblingIds(currentId).map(id => data.people[id]).filter(Boolean);
                 const children = getChildrenIds(currentId).map(id => data.people[id]).filter(Boolean);
 
                 info.innerHTML = `
           <div style="font-weight:900;font-size:16px;color:#0f172a">${escapeHtml(p?.name || '')}</div>
+          ${photoMarkup}
 
           <div class="pill"><i class="fa-solid fa-user"></i> <span>${escapeHtml(sex)}</span></div>
           <div class="pill"><i class="fa-solid fa-cake-candles"></i> <span>${escapeHtml(b || '—')}</span></div>
@@ -1708,6 +1828,40 @@
             updateInfoUI();
         }
 
+        function loadPhotoMap() {
+            try {
+                const raw = localStorage.getItem(STORAGE_PHOTO_KEY);
+                if (!raw) return {};
+                const parsed = JSON.parse(raw);
+                return parsed && typeof parsed === 'object' ? parsed : {};
+            } catch {
+                return {};
+            }
+        }
+
+        function persistPhotoMap() {
+            localStorage.setItem(STORAGE_PHOTO_KEY, JSON.stringify(photoMap));
+        }
+
+        function getPhoto(personId) {
+            return personId ? photoMap[personId] || '' : '';
+        }
+
+        function setPhoto(personId, dataUrl) {
+            if (!personId) return;
+            if (dataUrl) photoMap[personId] = dataUrl;
+            else delete photoMap[personId];
+            persistPhotoMap();
+        }
+
+        function cleanupPhotoMap() {
+            if (!data?.people) return;
+            Object.keys(photoMap).forEach(id => {
+                if (!data.people[id]) delete photoMap[id];
+            });
+            persistPhotoMap();
+        }
+
         function updateAdminUI() {
             const btn = document.getElementById('admin-toggle');
             if (!btn) return;
@@ -1805,6 +1959,118 @@
             URL.revokeObjectURL(url);
         }
 
+        function createPersonId() {
+            const ids = Object.keys(data.people || {});
+            const nums = ids.map(id => parseInt(id.replace(/\D+/g, ''), 10)).filter(n => !Number.isNaN(n));
+            const next = nums.length ? Math.max(...nums) + 1 : 1;
+            return `I${next}`;
+        }
+
+        function createFamilyId() {
+            const ids = Object.keys(data.fams || {});
+            const nums = ids.map(id => parseInt(id.replace(/\D+/g, ''), 10)).filter(n => !Number.isNaN(n));
+            const next = nums.length ? Math.max(...nums) + 1 : 1;
+            return `F${next}`;
+        }
+
+        function ensureFamilyForPerson(personId) {
+            const p = data.people[personId];
+            const famId = (p.FAMS || [])[0];
+            if (famId && data.fams[famId]) return data.fams[famId];
+            const newId = createFamilyId();
+            data.fams[newId] = { id: newId, husb: null, wife: null, chil: [], marriage: '' };
+            if (!p.FAMS) p.FAMS = [];
+            p.FAMS.push(newId);
+            return data.fams[newId];
+        }
+
+        function ensureParentFamilyForPerson(personId) {
+            const p = data.people[personId];
+            const famId = (p.FAMC || [])[0];
+            if (famId && data.fams[famId]) return data.fams[famId];
+            const newId = createFamilyId();
+            data.fams[newId] = { id: newId, husb: null, wife: null, chil: [personId], marriage: '' };
+            if (!p.FAMC) p.FAMC = [];
+            p.FAMC.push(newId);
+            return data.fams[newId];
+        }
+
+        function addRelative(basePersonId, { relation, name, sex, birth, death }) {
+            const newId = createPersonId();
+            data.people[newId] = {
+                id: newId,
+                name: name || 'Без имени',
+                sex: sex || '',
+                birth: birth || '',
+                death: death || '',
+                FAMS: [],
+                FAMC: []
+            };
+
+            if (relation === 'child') {
+                const fam = ensureFamilyForPerson(basePersonId);
+                fam.chil = fam.chil || [];
+                fam.chil.push(newId);
+                data.people[newId].FAMC.push(fam.id);
+            } else if (relation === 'spouse') {
+                const fam = ensureFamilyForPerson(basePersonId);
+                const base = data.people[basePersonId];
+                if (sex === 'M') fam.husb = newId;
+                else if (sex === 'F') fam.wife = newId;
+                else if (!fam.husb) fam.husb = newId;
+                else if (!fam.wife) fam.wife = newId;
+                if (base.sex === 'M' && !fam.husb) fam.husb = basePersonId;
+                if (base.sex === 'F' && !fam.wife) fam.wife = basePersonId;
+                data.people[newId].FAMS.push(fam.id);
+            } else if (relation === 'parent') {
+                const fam = ensureParentFamilyForPerson(basePersonId);
+                if (sex === 'M' && !fam.husb) fam.husb = newId;
+                else if (sex === 'F' && !fam.wife) fam.wife = newId;
+                else if (!fam.husb) fam.husb = newId;
+                else if (!fam.wife) fam.wife = newId;
+                data.people[newId].FAMS.push(fam.id);
+            } else if (relation === 'sibling') {
+                const fam = ensureParentFamilyForPerson(basePersonId);
+                fam.chil = fam.chil || [];
+                fam.chil.push(newId);
+                data.people[newId].FAMC.push(fam.id);
+            }
+
+            persistCurrentData();
+            rootId = findRoot();
+            return newId;
+        }
+
+        function deletePerson(personId) {
+            const p = data.people[personId];
+            if (!p) return;
+            delete data.people[personId];
+            setPhoto(personId, '');
+
+            Object.values(data.fams || {}).forEach(fam => {
+                if (fam.husb === personId) fam.husb = null;
+                if (fam.wife === personId) fam.wife = null;
+                if (Array.isArray(fam.chil)) {
+                    fam.chil = fam.chil.filter(cid => cid !== personId);
+                }
+            });
+
+            Object.values(data.people || {}).forEach(person => {
+                person.FAMS = (person.FAMS || []).filter(fid => data.fams[fid]);
+                person.FAMC = (person.FAMC || []).filter(fid => data.fams[fid]);
+            });
+
+            Object.keys(data.fams || {}).forEach(fid => {
+                const fam = data.fams[fid];
+                const hasMembers = fam.husb || fam.wife || (fam.chil && fam.chil.length);
+                if (!hasMembers) delete data.fams[fid];
+            });
+
+            persistCurrentData();
+            cleanupPhotoMap();
+            rootId = findRoot();
+        }
+
         function bindAdminHandlers(person) {
             if (!isAdmin) return;
 
@@ -1881,6 +2147,62 @@
                     if (sex) sex.value = person.sex || '';
                     if (birth) birth.value = person.birth || '';
                     if (death) death.value = person.death || '';
+                };
+            }
+
+            const photoInput = document.getElementById('admin-photo');
+            if (photoInput && person) {
+                photoInput.onchange = (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        const text = String(reader.result || '');
+                        setPhoto(person.id, text);
+                        updateInfoUI();
+                        render(false);
+                    };
+                    reader.readAsDataURL(file);
+                    photoInput.value = '';
+                };
+            }
+
+            const removePhoto = document.getElementById('admin-remove-photo');
+            if (removePhoto && person) {
+                removePhoto.onclick = () => {
+                    setPhoto(person.id, '');
+                    updateInfoUI();
+                    render(false);
+                };
+            }
+
+            const addRelativeForm = document.getElementById('admin-add-relative');
+            if (addRelativeForm && person) {
+                addRelativeForm.onsubmit = (e) => {
+                    e.preventDefault();
+                    const relation = document.getElementById('admin-relation')?.value || 'child';
+                    const name = document.getElementById('admin-new-name')?.value.trim() || '';
+                    const sex = document.getElementById('admin-new-sex')?.value || '';
+                    const birth = document.getElementById('admin-new-birth')?.value.trim() || '';
+                    const death = document.getElementById('admin-new-death')?.value.trim() || '';
+
+                    const newId = addRelative(person.id, { relation, name, sex, birth, death });
+                    currentId = newId;
+                    render(true);
+                    updateInfoUI();
+                    addRelativeForm.reset();
+                };
+            }
+
+            const deleteButton = document.getElementById('admin-delete-person');
+            if (deleteButton && person) {
+                deleteButton.onclick = () => {
+                    if (!confirm('Удалить выбранного человека?')) return;
+                    const wasCurrent = person.id === currentId;
+                    deletePerson(person.id);
+                    if (wasCurrent) currentId = null;
+                    render(true);
+                    updateInfoUI();
                 };
             }
         }
