@@ -1228,7 +1228,7 @@ function onPersonClick(clickedId, fullRoot) {
         focusResolvedId = resolved;
     }
 
-    updateSelectionStyles();
+    render(true);
 }
 
 function getPhotoStorageKey(personId) {
