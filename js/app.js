@@ -15,7 +15,7 @@ let pendingPhotoData = null;
 let isAdmin = false;
 
 const ADMIN_STORAGE_KEY = 'serbell-admin-auth';
-const ADMIN_PASSWORD = 'admin';
+const ADMIN_PASSWORD = 'password';
 
 /* ================= CONFIG ================= */
 const CARD_W = 230;
@@ -244,6 +244,39 @@ function expandIdsWithSiblingsFlat(baseIds, targetPersonId) {
     const sibs = getSiblingIds(targetPersonId);
     for (const sid of sibs) out.add(sid);
     return out;
+}
+
+function pruneDataByIds(node, keepIds, siblingSet) {
+    if (!node) return null;
+
+    const selfId = dataPrimaryId(node);
+    const isSibling = selfId && siblingSet && siblingSet.has(selfId);
+
+    if (isSibling) {
+        const p = data.people[selfId];
+        return {
+            type: 'person',
+            id: selfId,
+            name: p?.name || 'Без имени',
+            sex: p?.sex || '',
+            b: p?.birth || '',
+            d: p?.death || ''
+        };
+    }
+
+    const selfKept = selfId ? keepIds.has(selfId) : false;
+
+    const kids = (node.children || [])
+        .map(ch => pruneDataByIds(ch, keepIds, siblingSet))
+        .filter(Boolean);
+
+    if (selfKept || kids.length) {
+        const copy = { ...node };
+        if (kids.length) copy.children = kids;
+        else delete copy.children;
+        return copy;
+    }
+    return null;
 }
 
 
@@ -931,8 +964,14 @@ function render(doFit) {
         branchIds = computeBranchIds(fullRoot, resolved);
         branchIds = expandIdsWithSiblingsFlat(branchIds, resolved);
     }
+    let renderData = baseData;
+    if (focusResolvedId && branchIds.size) {
+        const resolved = resolveFocusTarget(fullRoot, highlightCandidate);
+        const siblingSet = new Set(getSiblingIds(resolved));
+        renderData = pruneDataByIds(baseData, branchIds, siblingSet) || baseData;
+    }
 
-    const root = d3.hierarchy(baseData);
+    const root = d3.hierarchy(renderData);
     layout(root);
     lastRenderedRoot = root;
 
