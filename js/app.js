@@ -12,6 +12,10 @@ let w = 0, h = 0;
 let lastTransform = d3.zoomIdentity;
 let lastRenderedRoot = null;
 let pendingPhotoData = null;
+let isAdmin = false;
+
+const ADMIN_STORAGE_KEY = 'serbell-admin-auth';
+const ADMIN_PASSWORD = 'admin';
 
 /* ================= CONFIG ================= */
 const CARD_W = 230;
@@ -40,6 +44,8 @@ fetch('./3.ged')
         initSvgOnce();
         render(true);
         setupUI();
+        loadAdminState();
+        updateAdminUI();
         updateInfoUI();
         syncSheetMetricsLater();
         // стартуем на мобиле в collapsed
@@ -692,6 +698,24 @@ function updateInfoUI() {
         info.innerHTML = `
           <div style="font-weight:900;font-size:16px;color:#0f172a">${escapeHtml(p?.name || '')}</div>
 
+          <div class="section">
+            <div class="section-title">Фото</div>
+            <div class="photo-uploader">
+              <div class="photo-preview">
+                <img id="person-photo-preview" alt="Фото человека" />
+                <div id="photo-placeholder" class="photo-placeholder">Нет фото</div>
+              </div>
+              <div class="photo-actions" id="photo-actions">
+                <label class="photo-btn">
+                  <input id="person-photo-input" type="file" accept="image/*" hidden>
+                  Загрузить фото
+                </label>
+                <button id="save-photo" class="photo-btn" type="button">Сохранить</button>
+              </div>
+              <div id="photo-note" class="photo-note">Загрузка фото доступна только администратору.</div>
+            </div>
+          </div>
+
           <div class="pill"><i class="fa-solid fa-user"></i> <span>${escapeHtml(sex)}</span></div>
           <div class="pill"><i class="fa-solid fa-cake-candles"></i> <span>${escapeHtml(b || '—')}</span></div>
           <div class="pill"><i class="fa-solid fa-skull"></i> <span>${escapeHtml(d || '—')}</span></div>
@@ -709,23 +733,6 @@ function updateInfoUI() {
               <div class="list">${children.map(ch => renderMiniPerson(ch)).join('')}</div>
             ` : `<div style="color:rgba(15,23,42,.55);font-size:12px;">Нет данных</div>`}
           </div>
-
-          <div class="section">
-            <div class="section-title">Фото</div>
-            <div class="photo-uploader">
-              <div class="photo-preview">
-                <img id="person-photo-preview" alt="Фото человека" />
-                <div id="photo-placeholder" class="photo-placeholder">Нет фото</div>
-              </div>
-              <div class="photo-actions">
-                <label class="photo-btn">
-                  <input id="person-photo-input" type="file" accept="image/*" hidden>
-                  Загрузить фото
-                </label>
-                <button id="save-photo" class="photo-btn" type="button">Сохранить</button>
-              </div>
-            </div>
-          </div>
         `;
 
         document.querySelectorAll('[data-person-id]').forEach(el => {
@@ -733,7 +740,8 @@ function updateInfoUI() {
                 e.stopPropagation();
                 const id = el.getAttribute('data-person-id');
                 if (!id) return;
-                selectPerson(id, true);
+                selectPerson(id, false);
+                updateSelectionStyles();
             });
         });
 
@@ -742,6 +750,8 @@ function updateInfoUI() {
         const placeholder = document.getElementById('photo-placeholder');
         const input = document.getElementById('person-photo-input');
         const saveBtn = document.getElementById('save-photo');
+        const actions = document.getElementById('photo-actions');
+        const note = document.getElementById('photo-note');
         const savedPhoto = loadPhotoData(currentId);
 
         if (preview) {
@@ -753,8 +763,13 @@ function updateInfoUI() {
         }
         if (saveBtn) saveBtn.disabled = true;
 
+        if (actions) actions.classList.toggle('disabled', !isAdmin);
+        if (note) note.classList.toggle('hidden', isAdmin);
+
         if (input) {
+            input.disabled = !isAdmin;
             input.addEventListener('change', (event) => {
+                if (!isAdmin) return;
                 const file = event.target.files?.[0];
                 if (!file) return;
 
@@ -774,6 +789,7 @@ function updateInfoUI() {
 
         if (saveBtn) {
             saveBtn.addEventListener('click', () => {
+                if (!isAdmin) return;
                 if (!currentId) return;
                 const dataUrl = pendingPhotoData || preview?.src;
                 if (!dataUrl) return;
@@ -1005,6 +1021,7 @@ function render(doFit) {
 
     if (doFit) fitToContent();
     // иначе сохраняем текущий zoom/позицию (не центрируем автоматически)
+    updateSelectionStyles();
 }
 
 function fitToContent() {
@@ -1034,6 +1051,25 @@ function setupUI() {
         focusResolvedId = null;
         render(true);
     };
+
+    const adminBtn = document.getElementById('admin-login');
+    if (adminBtn) {
+        adminBtn.onclick = () => {
+            if (isAdmin) {
+                setAdminState(false);
+                updateInfoUI();
+                return;
+            }
+
+            const entered = prompt('Введите пароль администратора');
+            if (entered && entered === ADMIN_PASSWORD) {
+                setAdminState(true);
+                updateInfoUI();
+            } else if (entered !== null) {
+                alert('Неверный пароль');
+            }
+        };
+    }
 
     document.getElementById('info-tab').onclick = () => togglePanel();
     document.getElementById('toggle-info').onclick = (e) => { e.stopPropagation(); togglePanel(); };
@@ -1153,7 +1189,7 @@ function onPersonClick(clickedId, fullRoot) {
         focusResolvedId = resolved;
     }
 
-    render(false);
+    updateSelectionStyles();
 }
 
 function getPhotoStorageKey(personId) {
@@ -1168,4 +1204,76 @@ function loadPhotoData(personId) {
 function savePhotoData(personId, dataUrl) {
     if (!personId || !dataUrl) return;
     localStorage.setItem(getPhotoStorageKey(personId), dataUrl);
+}
+
+function getNodePersonId(d) {
+    if (!d) return null;
+    if (d.data?.type === 'couple') return d.data.primaryId;
+    if (d.data?.type === 'person') return d.data.id;
+    return null;
+}
+
+function updateSelectionStyles() {
+    if (!g || !lastRenderedRoot) return;
+
+    const highlightCandidate = focusResolvedId || currentId;
+    let branchIds = new Set();
+    if (highlightCandidate) {
+        const resolved = resolveFocusTarget(lastRenderedRoot, highlightCandidate);
+        setBranchColorFromId(resolved);
+        branchIds = computeBranchIds(lastRenderedRoot, resolved);
+        branchIds = expandIdsWithSiblingsFlat(branchIds, resolved);
+    }
+
+    const nodes = g.selectAll('g.node');
+    nodes.classed('selected', d => getNodePersonId(d) === currentId);
+
+    if (branchIds.size) {
+        nodes.classed('dimmed', d => {
+            const pid = getNodePersonId(d);
+            return pid && !branchIds.has(pid);
+        });
+        nodes.classed('in-branch', d => {
+            const pid = getNodePersonId(d);
+            return pid && branchIds.has(pid);
+        });
+    } else {
+        nodes.classed('dimmed', false).classed('in-branch', false);
+    }
+
+    const links = g.selectAll('path.link');
+    if (branchIds.size) {
+        links.classed('dimmed-link', l => {
+            const a = getNodePersonId(l.source);
+            const b = getNodePersonId(l.target);
+            return !(branchIds.has(a) && branchIds.has(b));
+        });
+        links.classed('in-branch-link', l => {
+            const a = getNodePersonId(l.source);
+            const b = getNodePersonId(l.target);
+            return branchIds.has(a) && branchIds.has(b);
+        });
+    } else {
+        links.classed('dimmed-link', false).classed('in-branch-link', false);
+    }
+}
+
+function loadAdminState() {
+    isAdmin = localStorage.getItem(ADMIN_STORAGE_KEY) === 'true';
+}
+
+function setAdminState(next) {
+    isAdmin = next;
+    localStorage.setItem(ADMIN_STORAGE_KEY, String(next));
+    updateAdminUI();
+}
+
+function updateAdminUI() {
+    const adminBtn = document.getElementById('admin-login');
+    if (!adminBtn) return;
+    adminBtn.classList.toggle('admin-active', isAdmin);
+    adminBtn.title = isAdmin ? 'Выйти из админки' : 'Вход в админку';
+    adminBtn.innerHTML = isAdmin
+        ? '<i class="fa-solid fa-user-check"></i>'
+        : '<i class="fa-solid fa-user-shield"></i>';
 }
