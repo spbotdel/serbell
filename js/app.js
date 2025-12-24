@@ -12,10 +12,15 @@ let w = 0, h = 0;
 let lastTransform = d3.zoomIdentity;
 let lastRenderedRoot = null;
 let pendingPhotoData = null;
+let pendingPhotoFile = null;
 let isAdmin = false;
 
-const ADMIN_STORAGE_KEY = 'serbell-admin-auth';
-const ADMIN_PASSWORD = 'password';
+const SUPABASE_URL = 'https://imcfadcpjykqqgipqtws.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_lFv-zgjejU0UX_imTSs_1g_ZukPZopY';
+const SUPABASE_BUCKET = 'family-media';
+const FAMILY_AUTH_EMAIL = 'family@serbell.local';
+
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /* ================= CONFIG ================= */
 const CARD_W = 230;
@@ -44,8 +49,7 @@ fetch('./3.ged')
         initSvgOnce();
         render(true);
         setupUI();
-        loadAdminState();
-        updateAdminUI();
+        initAuth();
         updateInfoUI();
         syncSheetMetricsLater();
         // стартуем на мобиле в collapsed
@@ -779,25 +783,35 @@ function updateInfoUI() {
         });
 
         pendingPhotoData = null;
+        pendingPhotoFile = null;
         const preview = document.getElementById('person-photo-preview');
         const placeholder = document.getElementById('photo-placeholder');
         const input = document.getElementById('person-photo-input');
         const saveBtn = document.getElementById('save-photo');
         const actions = document.getElementById('photo-actions');
         const note = document.getElementById('photo-note');
-        const savedPhoto = loadPhotoData(currentId);
-
         if (preview) {
-            preview.src = savedPhoto || '';
-            preview.classList.toggle('has-photo', Boolean(savedPhoto));
+            preview.src = '';
+            preview.classList.remove('has-photo');
         }
         if (placeholder) {
-            placeholder.classList.toggle('hidden', Boolean(savedPhoto));
+            placeholder.classList.remove('hidden');
         }
         if (saveBtn) saveBtn.disabled = true;
 
         if (actions) actions.classList.toggle('disabled', !isAdmin);
         if (note) note.classList.toggle('hidden', isAdmin);
+
+        loadPhotoData(currentId).then((savedPhoto) => {
+            if (!savedPhoto || currentId !== p.id) return;
+            if (preview) {
+                preview.src = savedPhoto;
+                preview.classList.add('has-photo');
+            }
+            if (placeholder) {
+                placeholder.classList.add('hidden');
+            }
+        });
 
         if (input) {
             input.disabled = !isAdmin;
@@ -806,6 +820,7 @@ function updateInfoUI() {
                 const file = event.target.files?.[0];
                 if (!file) return;
 
+                pendingPhotoFile = file;
                 const reader = new FileReader();
                 reader.onload = () => {
                     pendingPhotoData = String(reader.result || '');
@@ -821,14 +836,14 @@ function updateInfoUI() {
         }
 
         if (saveBtn) {
-            saveBtn.addEventListener('click', () => {
+            saveBtn.addEventListener('click', async () => {
                 if (!isAdmin) return;
                 if (!currentId) return;
-                const dataUrl = pendingPhotoData || preview?.src;
-                if (!dataUrl) return;
-                savePhotoData(currentId, dataUrl);
-                pendingPhotoData = null;
+                if (!pendingPhotoFile) return;
                 saveBtn.disabled = true;
+                await savePhotoData(currentId, pendingPhotoFile);
+                pendingPhotoData = null;
+                pendingPhotoFile = null;
             });
         }
     }
@@ -1093,19 +1108,21 @@ function setupUI() {
 
     const adminBtn = document.getElementById('admin-login');
     if (adminBtn) {
-        adminBtn.onclick = () => {
+        adminBtn.onclick = async () => {
             if (isAdmin) {
-                setAdminState(false);
-                updateInfoUI();
+                await supabase.auth.signOut();
                 return;
             }
 
-            const entered = prompt('Введите пароль администратора');
-            if (entered && entered === ADMIN_PASSWORD) {
-                setAdminState(true);
-                updateInfoUI();
-            } else if (entered !== null) {
-                alert('Неверный пароль');
+            const email = prompt('Введите email семьи', FAMILY_AUTH_EMAIL) || '';
+            if (!email) return;
+            const password = prompt('Введите пароль') || '';
+            if (!password) return;
+
+            const { error } = await supabase.auth.signInWithPassword({ email, password });
+            if (error) {
+                console.error('Auth error', error);
+                alert('Ошибка входа. Проверьте email/пароль.');
             }
         };
     }
@@ -1231,18 +1248,39 @@ function onPersonClick(clickedId, fullRoot) {
     render(true);
 }
 
-function getPhotoStorageKey(personId) {
-    return `person-photo:${personId}`;
+function getPhotoStoragePath(personId, filename) {
+    const safeId = String(personId || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    return `${safeId}/${filename}`;
 }
 
-function loadPhotoData(personId) {
+async function loadPhotoData(personId) {
     if (!personId) return '';
-    return localStorage.getItem(getPhotoStorageKey(personId)) || '';
+    const safeId = String(personId || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const { data, error } = await supabase
+        .storage
+        .from(SUPABASE_BUCKET)
+        .list(safeId, { limit: 1, offset: 0, sortBy: { column: 'name', order: 'desc' } });
+
+    if (error || !data || data.length === 0) return '';
+    const path = `${safeId}/${data[0].name}`;
+    const { data: publicData } = supabase.storage.from(SUPABASE_BUCKET).getPublicUrl(path);
+    return publicData?.publicUrl || '';
 }
 
-function savePhotoData(personId, dataUrl) {
-    if (!personId || !dataUrl) return;
-    localStorage.setItem(getPhotoStorageKey(personId), dataUrl);
+async function savePhotoData(personId, file) {
+    if (!personId || !file) return;
+    const ext = String(file.name || '').split('.').pop() || 'jpg';
+    const path = getPhotoStoragePath(personId, `photo.${ext}`);
+    const { error } = await supabase
+        .storage
+        .from(SUPABASE_BUCKET)
+        .upload(path, file, { upsert: true });
+
+    if (error) {
+        console.error('Photo upload failed', error);
+        alert('Не удалось загрузить фото. Попробуйте ещё раз.');
+        return;
+    }
 }
 
 function getNodePersonId(d) {
@@ -1297,14 +1335,19 @@ function updateSelectionStyles() {
     }
 }
 
-function loadAdminState() {
-    isAdmin = localStorage.getItem(ADMIN_STORAGE_KEY) === 'true';
+async function initAuth() {
+    const { data } = await supabase.auth.getSession();
+    setAdminState(Boolean(data.session));
+
+    supabase.auth.onAuthStateChange((_event, session) => {
+        setAdminState(Boolean(session));
+    });
 }
 
 function setAdminState(next) {
     isAdmin = next;
-    localStorage.setItem(ADMIN_STORAGE_KEY, String(next));
     updateAdminUI();
+    updateInfoUI();
 }
 
 function updateAdminUI() {
