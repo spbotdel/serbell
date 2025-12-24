@@ -85,6 +85,43 @@
             z-index: 10;
         }
 
+        .admin-bar {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 16px 10px;
+            background: rgba(15, 23, 42, 0.65);
+            border-bottom: 1px solid var(--panel-border);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            z-index: 9;
+        }
+
+        .admin-bar.active {
+            display: flex;
+        }
+
+        .admin-bar label {
+            font-size: 12px;
+            font-weight: 600;
+            color: rgba(231, 234, 243, 0.8);
+        }
+
+        .admin-bar input[type="file"] {
+            font-size: 12px;
+            color: rgba(231, 234, 243, 0.9);
+        }
+
+        .admin-bar .admin-btn {
+            padding: 6px 10px;
+            font-size: 12px;
+        }
+
+        .admin-bar .admin-btn.secondary {
+            background: rgba(231, 234, 243, 0.12);
+            color: #e2e8f0;
+        }
+
         .logo {
             display: flex;
             align-items: center;
@@ -460,6 +497,29 @@
             padding: 6px;
         }
 
+        .rich-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .rich-toolbar button {
+            border: 1px solid rgba(15, 23, 42, 0.12);
+            background: #fff;
+            border-radius: 8px;
+            font-size: 12px;
+            padding: 6px 8px;
+            cursor: pointer;
+        }
+
+        .rich-editor {
+            min-height: 120px;
+            border-radius: 12px;
+            border: 1px solid rgba(15, 23, 42, 0.12);
+            padding: 10px;
+            background: #fff;
+        }
+
         .section {
             margin-top: 14px;
         }
@@ -725,6 +785,13 @@
                         class="fa-solid fa-user-shield"></i></button>
             </div>
         </header>
+        <div id="admin-bar" class="admin-bar">
+            <label for="admin-upload-ged">GEDCOM файл</label>
+            <input id="admin-upload-ged" type="file" accept=".ged,.GED,text/plain" />
+            <button class="admin-btn" type="button" id="admin-save-ged">Сохранить</button>
+            <button class="admin-btn secondary" type="button" id="admin-export-ged">Скачать GED</button>
+            <button class="admin-btn secondary" type="button" id="admin-reset-ged">Сбросить к опубликованным</button>
+        </div>
 
         <div class="main-content">
             <div id="tree"></div>
@@ -780,6 +847,7 @@
         let rawGedText = '';
         let isAdmin = false;
         let photoMap = {};
+        let infoMap = {};
 
         let currentId = null;
         let focusRawId = null;
@@ -814,10 +882,12 @@
         const STORAGE_UPDATED_KEY = 'serbell:ged:updatedAt';
         const STORAGE_PHOTO_KEY = 'serbell:photos';
         const STORAGE_ADMIN_HASH_KEY = 'serbell:admin:hash';
+        const STORAGE_INFO_KEY = 'serbell:info';
 
         /* ================= INIT ================= */
         isAdmin = localStorage.getItem(STORAGE_ADMIN_KEY) === '1';
         photoMap = loadPhotoMap();
+        infoMap = loadInfoMap();
 
         loadGedSource()
             .then(t => {
@@ -847,6 +917,7 @@
             focusRawId = null;
             focusResolvedId = null;
             cleanupPhotoMap();
+            cleanupInfoMap();
             if (persist) {
                 localStorage.setItem(STORAGE_GED_KEY, rawGedText);
                 localStorage.setItem(STORAGE_UPDATED_KEY, new Date().toISOString());
@@ -1445,6 +1516,16 @@
             </div>`;
         }
 
+        function renderPersonInfoSection(personId) {
+            const html = getPersonInfo(personId);
+            if (!html) return '';
+            return `
+            <div class="section">
+                <div class="section-title">Информация о человеке</div>
+                <div>${html}</div>
+            </div>`;
+        }
+
         function renderAdminSection(person) {
             if (!isAdmin) return '';
             const updatedAt = localStorage.getItem(STORAGE_UPDATED_KEY);
@@ -1454,6 +1535,9 @@
             const photo = getPhoto(person?.id);
             const disabled = person ? '' : 'disabled';
             const addNote = person ? '' : '<div class="admin-note">Сначала выберите человека.</div>';
+            const infoHtml = getPersonInfo(person?.id) || '';
+            const birthInput = toInputDate(person?.birth || '');
+            const deathInput = toInputDate(person?.death || '');
 
             const editForm = person ? `
             <form id="admin-edit-form" class="admin-card">
@@ -1472,11 +1556,11 @@
                 </div>
                 <div class="admin-row">
                     <label for="admin-birth">Дата рождения</label>
-                    <input id="admin-birth" type="text" value="${escapeHtml(person?.birth || '')}" placeholder="например, 12 APR 1980" />
+                    <input id="admin-birth" type="date" value="${escapeHtml(birthInput)}" />
                 </div>
                 <div class="admin-row">
                     <label for="admin-death">Дата смерти</label>
-                    <input id="admin-death" type="text" value="${escapeHtml(person?.death || '')}" placeholder="—" />
+                    <input id="admin-death" type="date" value="${escapeHtml(deathInput)}" />
                 </div>
                 <div class="admin-row">
                     <label for="admin-photo">Фото</label>
@@ -1484,9 +1568,21 @@
                         ${photo ? `<img src="${escapeHtml(photo)}" alt="Фото" />` : `<div class="photo-placeholder">Фото не загружено</div>`}
                     </div>
                     <input id="admin-photo" type="file" accept="image/*" />
+                    <div id="admin-photo-status" class="admin-note"></div>
+                    <div class="admin-note">Фотографии должны лежать в папке <strong>./img/family</strong>.</div>
                     <div class="admin-actions">
                         <button class="admin-btn secondary" type="button" id="admin-remove-photo">Удалить фото</button>
                     </div>
+                </div>
+                <div class="admin-row">
+                    <label>Информация о человеке</label>
+                    <div class="rich-toolbar">
+                        <button type="button" data-command="bold"><i class="fa-solid fa-bold"></i></button>
+                        <button type="button" data-command="italic"><i class="fa-solid fa-italic"></i></button>
+                        <button type="button" data-command="underline"><i class="fa-solid fa-underline"></i></button>
+                        <button type="button" data-command="insertUnorderedList"><i class="fa-solid fa-list-ul"></i></button>
+                    </div>
+                    <div id="admin-info-editor" class="rich-editor" contenteditable="true">${infoHtml}</div>
                 </div>
                 <div class="admin-actions">
                     <button class="admin-btn" type="submit">Сохранить</button>
@@ -1504,17 +1600,11 @@
             <div class="admin-section">
                 <div class="section-title">Администрирование</div>
                 <div class="admin-card">
-                    <div class="section-title">Данные GED</div>
-                    <div class="admin-row">
-                        <label for="admin-upload-ged">Загрузить GED файл</label>
-                        <input id="admin-upload-ged" type="file" accept=".ged,.GED,text/plain" />
-                    </div>
+                    <div class="section-title">Админ-сессия</div>
                     <div class="admin-actions">
-                        <button class="admin-btn secondary" type="button" id="admin-export-ged">Скачать GED</button>
-                        <button class="admin-btn secondary" type="button" id="admin-reset-ged">Сбросить к опубликованным</button>
                         <button class="admin-btn secondary" type="button" id="admin-logout">Выйти</button>
                     </div>
-                    <div class="admin-note">Текущее содержимое: ${fileInfo}. Последнее обновление: ${updatedLabel}</div>
+                    <div class="admin-note">GEDCOM: ${fileInfo}. Последнее обновление: ${updatedLabel}</div>
                 </div>
                 <form id="admin-add-relative" class="admin-card">
                     <div class="section-title">Добавить родственника</div>
@@ -1541,11 +1631,11 @@
                     </div>
                     <div class="admin-row">
                         <label for="admin-new-birth">Дата рождения</label>
-                        <input id="admin-new-birth" type="text" placeholder="например, 1985" ${disabled} />
+                        <input id="admin-new-birth" type="date" ${disabled} />
                     </div>
                     <div class="admin-row">
                         <label for="admin-new-death">Дата смерти</label>
-                        <input id="admin-new-death" type="text" placeholder="—" ${disabled} />
+                        <input id="admin-new-death" type="date" ${disabled} />
                     </div>
                     <div class="admin-actions">
                         <button class="admin-btn" type="submit" ${disabled}>Добавить</button>
@@ -1676,6 +1766,7 @@
                 const d = formatGedcomDate(p?.death || '');
                 const sex = (p?.sex === 'M') ? 'Мужчина' : (p?.sex === 'F') ? 'Женщина' : '—';
                 const photoMarkup = renderPhotoSection(p?.id);
+                const infoMarkup = renderPersonInfoSection(p?.id);
 
                 const siblings = getSiblingIds(currentId).map(id => data.people[id]).filter(Boolean);
                 const children = getChildrenIds(currentId).map(id => data.people[id]).filter(Boolean);
@@ -1701,6 +1792,7 @@
               <div class="list">${children.map(ch => renderMiniPerson(ch)).join('')}</div>
             ` : `<div style="color:rgba(15,23,42,.55);font-size:12px;">Нет данных</div>`}
           </div>
+          ${infoMarkup}
           ${adminMarkup}
         `;
 
@@ -1738,6 +1830,11 @@
         function formatGedcomDate(raw) {
             const s = String(raw || '').trim().toUpperCase();
             if (!s) return '';
+
+            if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+                const [yy, mm, dd] = s.split('-');
+                return `${dd}.${mm}.${yy}`;
+            }
 
             const approx = s.startsWith('ABT ') || s.startsWith('EST ') || s.startsWith('CAL ');
             const before = s.startsWith('BEF ');
@@ -1787,6 +1884,30 @@
                 }
             }
             return raw.trim();
+        }
+
+        function toInputDate(raw) {
+            const s = String(raw || '').trim();
+            if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+            const upper = s.toUpperCase();
+            const parts = upper.split(' ').filter(Boolean);
+            if (parts.length === 3) {
+                const day = parts[0].padStart(2, '0');
+                const mon = parts[1];
+                const year = parts[2];
+                const months = {
+                    JAN: '01', FEB: '02', MAR: '03', APR: '04', MAY: '05', JUN: '06',
+                    JUL: '07', AUG: '08', SEP: '09', OCT: '10', NOV: '11', DEC: '12'
+                };
+                if (months[mon] && /^\d{4}$/.test(year)) {
+                    return `${year}-${months[mon]}-${day}`;
+                }
+            }
+            return '';
+        }
+
+        function normalizeDateInput(value) {
+            return String(value || '').trim();
         }
 
         function pad2(v) {
@@ -1840,8 +1961,23 @@
             }
         }
 
+        function loadInfoMap() {
+            try {
+                const raw = localStorage.getItem(STORAGE_INFO_KEY);
+                if (!raw) return {};
+                const parsed = JSON.parse(raw);
+                return parsed && typeof parsed === 'object' ? parsed : {};
+            } catch {
+                return {};
+            }
+        }
+
         function persistPhotoMap() {
             localStorage.setItem(STORAGE_PHOTO_KEY, JSON.stringify(photoMap));
+        }
+
+        function persistInfoMap() {
+            localStorage.setItem(STORAGE_INFO_KEY, JSON.stringify(infoMap));
         }
 
         function getPhoto(personId) {
@@ -1855,12 +1991,37 @@
             persistPhotoMap();
         }
 
+        function normalizePhotoFileName(fileName) {
+            const clean = String(fileName || '').trim();
+            if (!clean) return '';
+            return `./img/family/${clean}`;
+        }
+
+        function getPersonInfo(personId) {
+            return personId ? infoMap[personId] || '' : '';
+        }
+
+        function setPersonInfo(personId, html) {
+            if (!personId) return;
+            if (html) infoMap[personId] = html;
+            else delete infoMap[personId];
+            persistInfoMap();
+        }
+
         function cleanupPhotoMap() {
             if (!data?.people) return;
             Object.keys(photoMap).forEach(id => {
                 if (!data.people[id]) delete photoMap[id];
             });
             persistPhotoMap();
+        }
+
+        function cleanupInfoMap() {
+            if (!data?.people) return;
+            Object.keys(infoMap).forEach(id => {
+                if (!data.people[id]) delete infoMap[id];
+            });
+            persistInfoMap();
         }
 
         function updateAdminUI() {
@@ -1870,6 +2031,9 @@
             btn.title = isAdmin ? 'Выйти из админки' : 'Войти как администратор';
             const icon = btn.querySelector('i');
             if (icon) icon.className = isAdmin ? 'fa-solid fa-right-from-bracket' : 'fa-solid fa-user-shield';
+
+            const bar = document.getElementById('admin-bar');
+            if (bar) bar.classList.toggle('active', isAdmin);
         }
 
         function hasAdminPassword() {
@@ -2096,6 +2260,7 @@
 
             persistCurrentData();
             cleanupPhotoMap();
+            cleanupInfoMap();
             rootId = findRoot();
         }
 
@@ -2139,6 +2304,14 @@
                 };
             }
 
+            const saveButton = document.getElementById('admin-save-ged');
+            if (saveButton) {
+                saveButton.onclick = () => {
+                    persistCurrentData();
+                    updateInfoUI();
+                };
+            }
+
             const logoutButton = document.getElementById('admin-logout');
             if (logoutButton) {
                 logoutButton.onclick = () => setAdminState(false);
@@ -2150,13 +2323,15 @@
                     e.preventDefault();
                     const name = document.getElementById('admin-name')?.value.trim() || '';
                     const sex = document.getElementById('admin-sex')?.value || '';
-                    const birth = document.getElementById('admin-birth')?.value.trim() || '';
-                    const death = document.getElementById('admin-death')?.value.trim() || '';
+                    const birth = normalizeDateInput(document.getElementById('admin-birth')?.value);
+                    const death = normalizeDateInput(document.getElementById('admin-death')?.value);
+                    const notes = document.getElementById('admin-info-editor')?.innerHTML || '';
 
                     person.name = name;
                     person.sex = sex;
                     person.birth = birth;
                     person.death = death;
+                    setPersonInfo(person.id, notes);
 
                     persistCurrentData();
                     render(false);
@@ -2173,8 +2348,10 @@
                     const death = document.getElementById('admin-death');
                     if (name) name.value = person.name || '';
                     if (sex) sex.value = person.sex || '';
-                    if (birth) birth.value = person.birth || '';
-                    if (death) death.value = person.death || '';
+                    if (birth) birth.value = toInputDate(person.birth || '');
+                    if (death) death.value = toInputDate(person.death || '');
+                    const editor = document.getElementById('admin-info-editor');
+                    if (editor) editor.innerHTML = getPersonInfo(person.id);
                 };
             }
 
@@ -2183,14 +2360,14 @@
                 photoInput.onchange = (e) => {
                     const file = e.target.files?.[0];
                     if (!file) return;
-                    const reader = new FileReader();
-                    reader.onload = () => {
-                        const text = String(reader.result || '');
-                        setPhoto(person.id, text);
-                        updateInfoUI();
+                    const path = normalizePhotoFileName(file.name);
+                    if (path) {
+                        setPhoto(person.id, path);
                         render(false);
-                    };
-                    reader.readAsDataURL(file);
+                        updateInfoUI();
+                        const status = document.getElementById('admin-photo-status');
+                        if (status) status.textContent = 'Сохранено';
+                    }
                     photoInput.value = '';
                 };
             }
@@ -2199,6 +2376,8 @@
             if (removePhoto && person) {
                 removePhoto.onclick = () => {
                     setPhoto(person.id, '');
+                    const status = document.getElementById('admin-photo-status');
+                    if (status) status.textContent = '';
                     updateInfoUI();
                     render(false);
                 };
@@ -2211,8 +2390,8 @@
                     const relation = document.getElementById('admin-relation')?.value || 'child';
                     const name = document.getElementById('admin-new-name')?.value.trim() || '';
                     const sex = document.getElementById('admin-new-sex')?.value || '';
-                    const birth = document.getElementById('admin-new-birth')?.value.trim() || '';
-                    const death = document.getElementById('admin-new-death')?.value.trim() || '';
+                    const birth = normalizeDateInput(document.getElementById('admin-new-birth')?.value);
+                    const death = normalizeDateInput(document.getElementById('admin-new-death')?.value);
 
                     const newId = addRelative(person.id, { relation, name, sex, birth, death });
                     currentId = newId;
@@ -2232,6 +2411,16 @@
                     render(true);
                     updateInfoUI();
                 };
+            }
+
+            const toolbar = document.querySelector('.rich-toolbar');
+            if (toolbar) {
+                toolbar.querySelectorAll('button[data-command]').forEach(btn => {
+                    btn.onclick = () => {
+                        const cmd = btn.getAttribute('data-command');
+                        if (cmd) document.execCommand(cmd, false, null);
+                    };
+                });
             }
         }
 
