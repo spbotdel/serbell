@@ -11,6 +11,7 @@ let w = 0, h = 0;
 
 let lastTransform = d3.zoomIdentity;
 let lastRenderedRoot = null;
+let pendingPhotoData = null;
 
 /* ================= CONFIG ================= */
 const CARD_W = 230;
@@ -239,38 +240,6 @@ function expandIdsWithSiblingsFlat(baseIds, targetPersonId) {
     return out;
 }
 
-function pruneDataByIds(node, keepIds, siblingSet) {
-    if (!node) return null;
-
-    const selfId = dataPrimaryId(node);
-    const isSibling = selfId && siblingSet && siblingSet.has(selfId);
-
-    if (isSibling) {
-        const p = data.people[selfId];
-        return {
-            type: 'person',
-            id: selfId,
-            name: p?.name || 'Без имени',
-            sex: p?.sex || '',
-            b: p?.birth || '',
-            d: p?.death || ''
-        };
-    }
-
-    const selfKept = selfId ? keepIds.has(selfId) : false;
-
-    const kids = (node.children || [])
-        .map(ch => pruneDataByIds(ch, keepIds, siblingSet))
-        .filter(Boolean);
-
-    if (selfKept || kids.length) {
-        const copy = { ...node };
-        if (kids.length) copy.children = kids;
-        else delete copy.children;
-        return copy;
-    }
-    return null;
-}
 
 /* ================= COLORS ================= */
 function setBranchColorFromId(personId) {
@@ -740,6 +709,23 @@ function updateInfoUI() {
               <div class="list">${children.map(ch => renderMiniPerson(ch)).join('')}</div>
             ` : `<div style="color:rgba(15,23,42,.55);font-size:12px;">Нет данных</div>`}
           </div>
+
+          <div class="section">
+            <div class="section-title">Фото</div>
+            <div class="photo-uploader">
+              <div class="photo-preview">
+                <img id="person-photo-preview" alt="Фото человека" />
+                <div id="photo-placeholder" class="photo-placeholder">Нет фото</div>
+              </div>
+              <div class="photo-actions">
+                <label class="photo-btn">
+                  <input id="person-photo-input" type="file" accept="image/*" hidden>
+                  Загрузить фото
+                </label>
+                <button id="save-photo" class="photo-btn" type="button">Сохранить</button>
+              </div>
+            </div>
+          </div>
         `;
 
         document.querySelectorAll('[data-person-id]').forEach(el => {
@@ -750,6 +736,52 @@ function updateInfoUI() {
                 selectPerson(id, true);
             });
         });
+
+        pendingPhotoData = null;
+        const preview = document.getElementById('person-photo-preview');
+        const placeholder = document.getElementById('photo-placeholder');
+        const input = document.getElementById('person-photo-input');
+        const saveBtn = document.getElementById('save-photo');
+        const savedPhoto = loadPhotoData(currentId);
+
+        if (preview) {
+            preview.src = savedPhoto || '';
+            preview.classList.toggle('has-photo', Boolean(savedPhoto));
+        }
+        if (placeholder) {
+            placeholder.classList.toggle('hidden', Boolean(savedPhoto));
+        }
+        if (saveBtn) saveBtn.disabled = true;
+
+        if (input) {
+            input.addEventListener('change', (event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = () => {
+                    pendingPhotoData = String(reader.result || '');
+                    if (preview) {
+                        preview.src = pendingPhotoData;
+                        preview.classList.add('has-photo');
+                    }
+                    if (placeholder) placeholder.classList.add('hidden');
+                    if (saveBtn) saveBtn.disabled = false;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        if (saveBtn) {
+            saveBtn.addEventListener('click', () => {
+                if (!currentId) return;
+                const dataUrl = pendingPhotoData || preview?.src;
+                if (!dataUrl) return;
+                savePhotoData(currentId, dataUrl);
+                pendingPhotoData = null;
+                saveBtn.disabled = true;
+            });
+        }
     }
 
     updatePanelArrows();
@@ -877,22 +909,14 @@ function render(doFit) {
     const highlightCandidate = focusResolvedId || currentId;
 
     let branchIds = new Set();
-    let siblingSet = new Set();
     if (highlightCandidate) {
         const resolved = resolveFocusTarget(fullRoot, highlightCandidate);
         setBranchColorFromId(resolved);
         branchIds = computeBranchIds(fullRoot, resolved);
-
-        siblingSet = new Set(getSiblingIds(resolved));
         branchIds = expandIdsWithSiblingsFlat(branchIds, resolved);
     }
 
-    let renderData = baseData;
-    if (focusResolvedId && branchIds.size) {
-        renderData = pruneDataByIds(baseData, branchIds, siblingSet) || baseData;
-    }
-
-    const root = d3.hierarchy(renderData);
+    const root = d3.hierarchy(baseData);
     layout(root);
     lastRenderedRoot = root;
 
@@ -949,7 +973,7 @@ function render(doFit) {
     nodeMerge.classed('dimmed', false).classed('in-branch', false);
     linkMerge.classed('dimmed-link', false).classed('in-branch-link', false);
 
-    if (!focusResolvedId && branchIds.size) {
+    if (branchIds.size) {
         nodeMerge.each(function (d) {
             const pid = (d.data.type === 'couple') ? d.data.primaryId : (d.data.type === 'person') ? d.data.id : null;
             if (pid && !branchIds.has(pid)) d3.select(this).classed('dimmed', true);
@@ -962,9 +986,6 @@ function render(doFit) {
             if (!(branchIds.has(a) && branchIds.has(b))) d3.select(this).classed('dimmed-link', true);
             else d3.select(this).classed('in-branch-link', true);
         });
-    } else if (focusResolvedId) {
-        nodeMerge.classed('in-branch', true);
-        linkMerge.classed('in-branch-link', true);
     }
 
     nodeMerge.transition()
@@ -1133,4 +1154,18 @@ function onPersonClick(clickedId, fullRoot) {
     }
 
     render(false);
+}
+
+function getPhotoStorageKey(personId) {
+    return `person-photo:${personId}`;
+}
+
+function loadPhotoData(personId) {
+    if (!personId) return '';
+    return localStorage.getItem(getPhotoStorageKey(personId)) || '';
+}
+
+function savePhotoData(personId, dataUrl) {
+    if (!personId || !dataUrl) return;
+    localStorage.setItem(getPhotoStorageKey(personId), dataUrl);
 }

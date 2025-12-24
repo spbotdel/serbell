@@ -331,6 +331,73 @@ body {
     transform: translateY(-1px);
 }
 
+.photo-uploader {
+    margin-top: 8px;
+}
+
+.photo-preview {
+    position: relative;
+    width: 100%;
+    height: 180px;
+    border-radius: 14px;
+    background: rgba(15, 23, 42, .04);
+    border: 1px solid rgba(15, 23, 42, .08);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.photo-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: none;
+}
+
+.photo-preview img.has-photo {
+    display: block;
+}
+
+.photo-placeholder {
+    position: absolute;
+    font-size: 12px;
+    color: rgba(15, 23, 42, .6);
+}
+
+.photo-placeholder.hidden {
+    display: none;
+}
+
+.photo-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.photo-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 12px;
+    border-radius: 12px;
+    background: rgba(15, 23, 42, .08);
+    border: 1px solid rgba(15, 23, 42, .12);
+    color: rgba(15, 23, 42, .9);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.photo-btn:hover {
+    background: rgba(15, 23, 42, .12);
+}
+
+.photo-btn:disabled {
+    opacity: .5;
+    cursor: default;
+}
+
 .li-name {
     font-weight: 800;
     font-size: 13px;
