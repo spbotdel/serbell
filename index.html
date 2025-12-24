@@ -151,6 +151,12 @@
             transform: translateY(-1px);
         }
 
+        .ctrl-btn.admin-active {
+            background: rgba(251, 113, 133, .2);
+            border-color: rgba(251, 113, 133, .45);
+            color: #fecdd3;
+        }
+
         .ctrl-btn:active {
             transform: translateY(0px) scale(.98);
         }
@@ -298,6 +304,122 @@
             height: calc(100% - 52px);
             font-size: 13px;
             line-height: 1.45;
+        }
+
+        .admin-section {
+            border-top: 1px solid rgba(15, 23, 42, 0.12);
+            margin-top: 12px;
+            padding-top: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .admin-card {
+            background: rgba(15, 23, 42, 0.04);
+            border-radius: 14px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .admin-row {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .admin-row label {
+            font-size: 12px;
+            font-weight: 600;
+            color: rgba(15, 23, 42, 0.72);
+        }
+
+        .admin-row input,
+        .admin-row select {
+            border-radius: 10px;
+            border: 1px solid rgba(15, 23, 42, 0.12);
+            padding: 8px 10px;
+            font-size: 14px;
+            font-family: inherit;
+            color: #0f172a;
+            background: #fff;
+        }
+
+        .admin-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .admin-btn {
+            border: none;
+            border-radius: 10px;
+            padding: 8px 12px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            color: #fff;
+            background: linear-gradient(135deg, #2563eb, #7c3aed);
+            box-shadow: 0 6px 14px rgba(37, 99, 235, 0.18);
+            transition: transform 0.12s ease, box-shadow 0.12s ease;
+        }
+
+        .admin-btn.secondary {
+            background: rgba(15, 23, 42, 0.1);
+            color: #0f172a;
+            box-shadow: none;
+        }
+
+        .admin-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 16px rgba(37, 99, 235, 0.24);
+        }
+
+        .admin-note {
+            font-size: 12px;
+            color: rgba(15, 23, 42, 0.6);
+        }
+
+        .admin-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.55);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+            z-index: 40;
+        }
+
+        .admin-modal.open {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .admin-dialog {
+            background: #fff;
+            color: #0f172a;
+            width: min(92vw, 420px);
+            border-radius: 18px;
+            padding: 20px;
+            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.25);
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .admin-dialog h2 {
+            font-size: 18px;
+        }
+
+        .admin-error {
+            color: #dc2626;
+            font-size: 12px;
+            min-height: 16px;
         }
 
         .pill {
@@ -574,6 +696,8 @@
                 <button id="zoom-out" class="ctrl-btn" title="Уменьшить"><i class="fa-solid fa-minus"></i></button>
                 <button id="reset-view" class="ctrl-btn" title="Сброс"><i
                         class="fa-solid fa-arrows-rotate"></i></button>
+                <button id="admin-toggle" class="ctrl-btn" title="Войти как администратор"><i
+                        class="fa-solid fa-user-shield"></i></button>
             </div>
         </header>
 
@@ -606,10 +730,29 @@
 
     </div>
 
+    <div id="admin-modal" class="admin-modal" aria-hidden="true">
+        <div class="admin-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-title">
+            <h2 id="admin-title">Вход администратора</h2>
+            <div class="admin-note">Пароль задаётся в коде страницы. После входа станет доступна загрузка GED и
+                редактирование данных.</div>
+            <form id="admin-login-form" class="admin-row">
+                <label for="admin-password">Пароль</label>
+                <input id="admin-password" type="password" autocomplete="current-password" required />
+                <div class="admin-actions">
+                    <button class="admin-btn" type="submit">Войти</button>
+                    <button class="admin-btn secondary" type="button" id="admin-cancel">Отмена</button>
+                </div>
+            </form>
+            <div id="admin-error" class="admin-error"></div>
+        </div>
+    </div>
+
     <script>
         /* ================= STATE ================= */
         let data = null;
         let rootId = null;
+        let rawGedText = '';
+        let isAdmin = false;
 
         let currentId = null;
         let focusRawId = null;
@@ -639,21 +782,46 @@
 
         const MARRIAGE_ICON = 'fa-heart';
 
+        const ADMIN_PASSWORD = 'serbell-admin';
+        const STORAGE_GED_KEY = 'serbell:ged';
+        const STORAGE_ADMIN_KEY = 'serbell:admin';
+        const STORAGE_UPDATED_KEY = 'serbell:ged:updatedAt';
+
         /* ================= INIT ================= */
-        fetch('./3.ged')
-            .then(r => r.text())
+        isAdmin = localStorage.getItem(STORAGE_ADMIN_KEY) === '1';
+
+        loadGedSource()
             .then(t => {
-                data = parseGedcom(t);
-                rootId = findRoot();
+                applyGedText(t);
                 initSvgOnce();
                 render(true);
                 setupUI();
                 updateInfoUI();
+                updateAdminUI();
                 syncSheetMetricsLater();
                 // стартуем на мобиле в collapsed
                 if (isPortrait()) setSheetState('collapsed');
             })
             .catch(e => console.error('GED load error', e));
+
+        function loadGedSource() {
+            const cached = localStorage.getItem(STORAGE_GED_KEY);
+            if (cached) return Promise.resolve(cached);
+            return fetch('./3.ged').then(r => r.text());
+        }
+
+        function applyGedText(text, { persist = false } = {}) {
+            rawGedText = text || '';
+            data = parseGedcom(rawGedText);
+            rootId = findRoot();
+            currentId = null;
+            focusRawId = null;
+            focusResolvedId = null;
+            if (persist) {
+                localStorage.setItem(STORAGE_GED_KEY, rawGedText);
+                localStorage.setItem(STORAGE_UPDATED_KEY, new Date().toISOString());
+            }
+        }
 
         function initSvgOnce() {
             const container = document.getElementById('tree');
@@ -1214,6 +1382,68 @@
             }
         }
 
+        function renderAdminSection(person) {
+            if (!isAdmin) return '';
+            const updatedAt = localStorage.getItem(STORAGE_UPDATED_KEY);
+            const updatedLabel = updatedAt ? new Date(updatedAt).toLocaleString('ru-RU') : '—';
+            const fileInfo = rawGedText ? `${rawGedText.split(/\r?\n/).length} строк` : 'нет данных';
+            const sexValue = person?.sex || '';
+
+            const editForm = person ? `
+            <form id="admin-edit-form" class="admin-card">
+                <div class="section-title">Редактирование человека</div>
+                <div class="admin-row">
+                    <label for="admin-name">ФИО</label>
+                    <input id="admin-name" type="text" value="${escapeHtml(person?.name || '')}" />
+                </div>
+                <div class="admin-row">
+                    <label for="admin-sex">Пол</label>
+                    <select id="admin-sex">
+                        <option value="" ${sexValue === '' ? 'selected' : ''}>—</option>
+                        <option value="M" ${sexValue === 'M' ? 'selected' : ''}>Мужской</option>
+                        <option value="F" ${sexValue === 'F' ? 'selected' : ''}>Женский</option>
+                    </select>
+                </div>
+                <div class="admin-row">
+                    <label for="admin-birth">Дата рождения</label>
+                    <input id="admin-birth" type="text" value="${escapeHtml(person?.birth || '')}" placeholder="например, 12 APR 1980" />
+                </div>
+                <div class="admin-row">
+                    <label for="admin-death">Дата смерти</label>
+                    <input id="admin-death" type="text" value="${escapeHtml(person?.death || '')}" placeholder="—" />
+                </div>
+                <div class="admin-actions">
+                    <button class="admin-btn" type="submit">Сохранить</button>
+                    <button class="admin-btn secondary" type="button" id="admin-reset-fields">Сбросить</button>
+                </div>
+                <div class="admin-note">Изменения сохраняются в браузере (localStorage).</div>
+            </form>
+            ` : `
+            <div class="admin-card">
+                <div class="section-title">Редактирование человека</div>
+                <div class="admin-note">Выберите человека на дереве, чтобы открыть редактирование.</div>
+            </div>`;
+
+            return `
+            <div class="admin-section">
+                <div class="section-title">Администрирование</div>
+                <div class="admin-card">
+                    <div class="section-title">Данные GED</div>
+                    <div class="admin-row">
+                        <label for="admin-upload-ged">Загрузить GED файл</label>
+                        <input id="admin-upload-ged" type="file" accept=".ged,.GED,text/plain" />
+                    </div>
+                    <div class="admin-actions">
+                        <button class="admin-btn secondary" type="button" id="admin-export-ged">Скачать GED</button>
+                        <button class="admin-btn secondary" type="button" id="admin-reset-ged">Сбросить к опубликованным</button>
+                        <button class="admin-btn secondary" type="button" id="admin-logout">Выйти</button>
+                    </div>
+                    <div class="admin-note">Текущее содержимое: ${fileInfo}. Последнее обновление: ${updatedLabel}</div>
+                </div>
+                ${editForm}
+            </div>`;
+        }
+
         function updatePanelArrows() {
             const panel = document.getElementById('info-panel');
             const tab = document.getElementById('info-tab');
@@ -1319,8 +1549,9 @@
             renderVerticalNameToTab();
 
             const info = document.getElementById('person-info');
+            const adminMarkup = renderAdminSection(p);
             if (!p) {
-                info.innerHTML = 'Выберите человека';
+                info.innerHTML = `Выберите человека${adminMarkup}`;
             } else {
                 const b = formatGedcomDate(p?.birth || '');
                 const d = formatGedcomDate(p?.death || '');
@@ -1349,6 +1580,7 @@
               <div class="list">${children.map(ch => renderMiniPerson(ch)).join('')}</div>
             ` : `<div style="color:rgba(15,23,42,.55);font-size:12px;">Нет данных</div>`}
           </div>
+          ${adminMarkup}
         `;
 
                 document.querySelectorAll('[data-person-id]').forEach(el => {
@@ -1364,6 +1596,7 @@
             updatePanelArrows();
             syncSheetMetricsLater();
             if (isPortrait()) setSheetState('collapsed');
+            bindAdminHandlers(p);
         }
 
         /* ================= FORMAT ================= */
@@ -1466,6 +1699,190 @@
 
         function getCssVar(name) {
             return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+        }
+
+        function setAdminState(next) {
+            isAdmin = next;
+            localStorage.setItem(STORAGE_ADMIN_KEY, next ? '1' : '0');
+            updateAdminUI();
+            updateInfoUI();
+        }
+
+        function updateAdminUI() {
+            const btn = document.getElementById('admin-toggle');
+            if (!btn) return;
+            btn.classList.toggle('admin-active', isAdmin);
+            btn.title = isAdmin ? 'Выйти из админки' : 'Войти как администратор';
+            const icon = btn.querySelector('i');
+            if (icon) icon.className = isAdmin ? 'fa-solid fa-right-from-bracket' : 'fa-solid fa-user-shield';
+        }
+
+        function openAdminModal() {
+            const modal = document.getElementById('admin-modal');
+            const error = document.getElementById('admin-error');
+            const input = document.getElementById('admin-password');
+            if (!modal || !input) return;
+            if (error) error.textContent = '';
+            input.value = '';
+            modal.classList.add('open');
+            modal.setAttribute('aria-hidden', 'false');
+            setTimeout(() => input.focus(), 30);
+        }
+
+        function closeAdminModal() {
+            const modal = document.getElementById('admin-modal');
+            if (!modal) return;
+            modal.classList.remove('open');
+            modal.setAttribute('aria-hidden', 'true');
+        }
+
+        function persistCurrentData() {
+            rawGedText = generateGedcom(data);
+            localStorage.setItem(STORAGE_GED_KEY, rawGedText);
+            localStorage.setItem(STORAGE_UPDATED_KEY, new Date().toISOString());
+        }
+
+        function generateGedcom(src) {
+            const lines = [];
+            lines.push('0 HEAD');
+            lines.push('1 SOUR serbell');
+            lines.push('1 GEDC');
+            lines.push('2 VERS 5.5.1');
+            lines.push('1 CHAR UTF-8');
+
+            const peopleIds = Object.keys(src.people || {}).sort();
+            for (const id of peopleIds) {
+                const p = src.people[id];
+                if (!p) continue;
+                lines.push(`0 @${id}@ INDI`);
+                if (p.name) lines.push(`1 NAME ${p.name}`);
+                if (p.sex) lines.push(`1 SEX ${p.sex}`);
+                if (p.birth) {
+                    lines.push('1 BIRT');
+                    lines.push(`2 DATE ${p.birth}`);
+                }
+                if (p.death) {
+                    lines.push('1 DEAT');
+                    lines.push(`2 DATE ${p.death}`);
+                }
+                (p.FAMS || []).forEach(fid => {
+                    if (fid) lines.push(`1 FAMS @${fid}@`);
+                });
+                (p.FAMC || []).forEach(fid => {
+                    if (fid) lines.push(`1 FAMC @${fid}@`);
+                });
+            }
+
+            const famIds = Object.keys(src.fams || {}).sort();
+            for (const id of famIds) {
+                const f = src.fams[id];
+                if (!f) continue;
+                lines.push(`0 @${id}@ FAM`);
+                if (f.husb) lines.push(`1 HUSB @${f.husb}@`);
+                if (f.wife) lines.push(`1 WIFE @${f.wife}@`);
+                if (f.marriage) {
+                    lines.push('1 MARR');
+                    lines.push(`2 DATE ${f.marriage}`);
+                }
+                (f.chil || []).forEach(cid => {
+                    if (cid) lines.push(`1 CHIL @${cid}@`);
+                });
+            }
+
+            lines.push('0 TRLR');
+            return lines.join('\n');
+        }
+
+        function downloadGedcom() {
+            const blob = new Blob([rawGedText || generateGedcom(data)], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'family-tree.ged';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        function bindAdminHandlers(person) {
+            if (!isAdmin) return;
+
+            const upload = document.getElementById('admin-upload-ged');
+            if (upload) {
+                upload.onchange = (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        const text = String(reader.result || '');
+                        applyGedText(text, { persist: true });
+                        render(true);
+                        updateInfoUI();
+                    };
+                    reader.readAsText(file);
+                    upload.value = '';
+                };
+            }
+
+            const resetButton = document.getElementById('admin-reset-ged');
+            if (resetButton) {
+                resetButton.onclick = async () => {
+                    localStorage.removeItem(STORAGE_GED_KEY);
+                    localStorage.removeItem(STORAGE_UPDATED_KEY);
+                    const fresh = await fetch('./3.ged').then(r => r.text());
+                    applyGedText(fresh);
+                    render(true);
+                    updateInfoUI();
+                };
+            }
+
+            const exportButton = document.getElementById('admin-export-ged');
+            if (exportButton) {
+                exportButton.onclick = () => {
+                    persistCurrentData();
+                    downloadGedcom();
+                };
+            }
+
+            const logoutButton = document.getElementById('admin-logout');
+            if (logoutButton) {
+                logoutButton.onclick = () => setAdminState(false);
+            }
+
+            const form = document.getElementById('admin-edit-form');
+            if (form && person) {
+                form.onsubmit = (e) => {
+                    e.preventDefault();
+                    const name = document.getElementById('admin-name')?.value.trim() || '';
+                    const sex = document.getElementById('admin-sex')?.value || '';
+                    const birth = document.getElementById('admin-birth')?.value.trim() || '';
+                    const death = document.getElementById('admin-death')?.value.trim() || '';
+
+                    person.name = name;
+                    person.sex = sex;
+                    person.birth = birth;
+                    person.death = death;
+
+                    persistCurrentData();
+                    render(false);
+                    updateInfoUI();
+                };
+            }
+
+            const resetFields = document.getElementById('admin-reset-fields');
+            if (resetFields && person) {
+                resetFields.onclick = () => {
+                    const name = document.getElementById('admin-name');
+                    const sex = document.getElementById('admin-sex');
+                    const birth = document.getElementById('admin-birth');
+                    const death = document.getElementById('admin-death');
+                    if (name) name.value = person.name || '';
+                    if (sex) sex.value = person.sex || '';
+                    if (birth) birth.value = person.birth || '';
+                    if (death) death.value = person.death || '';
+                };
+            }
         }
 
         /* ================= RENDER ================= */
@@ -1625,6 +2042,43 @@
 
             document.getElementById('info-tab').onclick = () => togglePanel();
             document.getElementById('toggle-info').onclick = (e) => { e.stopPropagation(); togglePanel(); };
+
+            const adminBtn = document.getElementById('admin-toggle');
+            if (adminBtn) {
+                adminBtn.onclick = () => {
+                    if (isAdmin) {
+                        setAdminState(false);
+                    } else {
+                        openAdminModal();
+                    }
+                };
+            }
+
+            const adminModal = document.getElementById('admin-modal');
+            const adminForm = document.getElementById('admin-login-form');
+            const adminCancel = document.getElementById('admin-cancel');
+            const adminError = document.getElementById('admin-error');
+            if (adminForm) {
+                adminForm.addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    const input = document.getElementById('admin-password');
+                    const value = input?.value || '';
+                    if (value === ADMIN_PASSWORD) {
+                        setAdminState(true);
+                        closeAdminModal();
+                    } else {
+                        if (adminError) adminError.textContent = 'Неверный пароль.';
+                    }
+                });
+            }
+            if (adminCancel) {
+                adminCancel.onclick = () => closeAdminModal();
+            }
+            if (adminModal) {
+                adminModal.addEventListener('click', (e) => {
+                    if (e.target === adminModal) closeAdminModal();
+                });
+            }
 
             const scrim = document.getElementById('sheet-scrim');
             if (scrim) scrim.onclick = () => { if (isPortrait()) setSheetState('collapsed'); };
