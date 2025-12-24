@@ -758,11 +758,12 @@
     <div id="admin-modal" class="admin-modal" aria-hidden="true">
         <div class="admin-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-title">
             <h2 id="admin-title">Вход администратора</h2>
-            <div class="admin-note">Пароль задаётся в коде страницы. После входа станет доступна загрузка GED и
-                редактирование данных.</div>
+            <div id="admin-note" class="admin-note">Введите пароль администратора, чтобы открыть режим управления.</div>
             <form id="admin-login-form" class="admin-row">
                 <label for="admin-password">Пароль</label>
                 <input id="admin-password" type="password" autocomplete="current-password" required />
+                <label id="admin-password-confirm-label" for="admin-password-confirm" style="display:none;">Повторите пароль</label>
+                <input id="admin-password-confirm" type="password" autocomplete="new-password" style="display:none;" />
                 <div class="admin-actions">
                     <button class="admin-btn" type="submit">Войти</button>
                     <button class="admin-btn secondary" type="button" id="admin-cancel">Отмена</button>
@@ -808,11 +809,11 @@
 
         const MARRIAGE_ICON = 'fa-heart';
 
-        const ADMIN_PASSWORD = 'serbell-admin';
         const STORAGE_GED_KEY = 'serbell:ged';
         const STORAGE_ADMIN_KEY = 'serbell:admin';
         const STORAGE_UPDATED_KEY = 'serbell:ged:updatedAt';
         const STORAGE_PHOTO_KEY = 'serbell:photos';
+        const STORAGE_ADMIN_HASH_KEY = 'serbell:admin:hash';
 
         /* ================= INIT ================= */
         isAdmin = localStorage.getItem(STORAGE_ADMIN_KEY) === '1';
@@ -1871,13 +1872,40 @@
             if (icon) icon.className = isAdmin ? 'fa-solid fa-right-from-bracket' : 'fa-solid fa-user-shield';
         }
 
+        function hasAdminPassword() {
+            return !!localStorage.getItem(STORAGE_ADMIN_HASH_KEY);
+        }
+
+        async function hashPassword(value) {
+            const enc = new TextEncoder().encode(value);
+            const hash = await crypto.subtle.digest('SHA-256', enc);
+            return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
         function openAdminModal() {
             const modal = document.getElementById('admin-modal');
             const error = document.getElementById('admin-error');
             const input = document.getElementById('admin-password');
+            const confirmLabel = document.getElementById('admin-password-confirm-label');
+            const confirmInput = document.getElementById('admin-password-confirm');
+            const title = document.getElementById('admin-title');
+            const note = document.getElementById('admin-note');
             if (!modal || !input) return;
             if (error) error.textContent = '';
             input.value = '';
+            if (confirmInput) confirmInput.value = '';
+
+            const needsSetup = !hasAdminPassword();
+            if (confirmLabel && confirmInput) {
+                confirmLabel.style.display = needsSetup ? 'block' : 'none';
+                confirmInput.style.display = needsSetup ? 'block' : 'none';
+                confirmInput.required = needsSetup;
+            }
+            if (title) title.textContent = needsSetup ? 'Создать пароль администратора' : 'Вход администратора';
+            if (note) note.textContent = needsSetup
+                ? 'Создайте пароль администратора. Он сохранится в вашем браузере.'
+                : 'Введите пароль администратора, чтобы открыть режим управления.';
+
             modal.classList.add('open');
             modal.setAttribute('aria-hidden', 'false');
             setTimeout(() => input.focus(), 30);
@@ -2381,11 +2409,33 @@
             const adminCancel = document.getElementById('admin-cancel');
             const adminError = document.getElementById('admin-error');
             if (adminForm) {
-                adminForm.addEventListener('submit', (e) => {
+                adminForm.addEventListener('submit', async (e) => {
                     e.preventDefault();
                     const input = document.getElementById('admin-password');
+                    const confirmInput = document.getElementById('admin-password-confirm');
+                    const needsSetup = !hasAdminPassword();
                     const value = input?.value || '';
-                    if (value === ADMIN_PASSWORD) {
+                    if (!value || value.length < 6) {
+                        if (adminError) adminError.textContent = 'Пароль должен быть минимум 6 символов.';
+                        return;
+                    }
+
+                    if (needsSetup) {
+                        const confirmValue = confirmInput?.value || '';
+                        if (value !== confirmValue) {
+                            if (adminError) adminError.textContent = 'Пароли не совпадают.';
+                            return;
+                        }
+                        const hash = await hashPassword(value);
+                        localStorage.setItem(STORAGE_ADMIN_HASH_KEY, hash);
+                        setAdminState(true);
+                        closeAdminModal();
+                        return;
+                    }
+
+                    const storedHash = localStorage.getItem(STORAGE_ADMIN_HASH_KEY);
+                    const hash = await hashPassword(value);
+                    if (storedHash && storedHash === hash) {
                         setAdminState(true);
                         closeAdminModal();
                     } else {
