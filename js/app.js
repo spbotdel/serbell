@@ -1263,8 +1263,17 @@ async function loadPhotoData(personId) {
 
     if (error || !data || data.length === 0) return '';
     const path = `${safeId}/${data[0].name}`;
-    const { data: publicData } = supabaseClient.storage.from(SUPABASE_BUCKET).getPublicUrl(path);
-    return publicData?.publicUrl || '';
+    const { data: signedData, error: signedError } = await supabaseClient
+        .storage
+        .from(SUPABASE_BUCKET)
+        .createSignedUrl(path, 60 * 60);
+
+    if (signedError) {
+        console.error('Photo signed URL error', signedError);
+        return '';
+    }
+
+    return signedData?.signedUrl || '';
 }
 
 async function savePhotoData(personId, file) {
@@ -1274,7 +1283,11 @@ async function savePhotoData(personId, file) {
     const { error } = await supabaseClient
         .storage
         .from(SUPABASE_BUCKET)
-        .upload(path, file, { upsert: true });
+        .upload(path, file, {
+            upsert: true,
+            contentType: file.type || 'image/jpeg',
+            cacheControl: '3600'
+        });
 
     if (error) {
         console.error('Photo upload failed', error);
