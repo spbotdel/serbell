@@ -1304,7 +1304,8 @@ async function savePhotoData(personId, file) {
 
     if (upsertError) {
         console.error('Photo metadata save failed', upsertError);
-        alert('Фото загружено, но не удалось сохранить привязку.');
+        const details = upsertError?.message || upsertError?.details || 'Неизвестная ошибка';
+        alert(`Фото загружено, но не удалось сохранить привязку: ${details}`);
     }
 }
 
