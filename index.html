@@ -947,6 +947,7 @@
                 updateInfoUI();
                 updateAdminUI();
                 syncSheetMetricsLater();
+                if (currentId) void refreshPersonMedia(currentId);
                 // стартуем на мобиле в collapsed
                 if (isPortrait()) setSheetState('collapsed');
             })
@@ -1653,7 +1654,7 @@
                     <button class="admin-btn" type="submit">Сохранить</button>
                     <button class="admin-btn secondary" type="button" id="admin-reset-fields">Сбросить</button>
                 </div>
-                <div class="admin-note">Изменения сохраняются в браузере (localStorage).</div>
+                <div class="admin-note">Изменения сохраняются в браузере. Для синхронизации между устройствами подключите Supabase.</div>
             </form>
             ` : `
             <div class="admin-card">
