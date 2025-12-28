@@ -14,6 +14,7 @@ let lastRenderedRoot = null;
 let pendingPhotoData = null;
 let pendingPhotoFile = null;
 let isAdmin = false;
+let currentUserEmail = '';
 
 const SUPABASE_URL = 'https://imcfadcpjykqqgipqtws.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_lFv-zgjejU0UX_imTSs_1g_ZukPZopY';
@@ -751,6 +752,7 @@ function updateInfoUI() {
                 <button id="save-photo" class="photo-btn" type="button">Сохранить</button>
               </div>
               <div id="photo-note" class="photo-note">Загрузка фото доступна только администратору.</div>
+              <div id="auth-status" class="photo-note auth-status"></div>
             </div>
           </div>
 
@@ -791,6 +793,7 @@ function updateInfoUI() {
         const saveBtn = document.getElementById('save-photo');
         const actions = document.getElementById('photo-actions');
         const note = document.getElementById('photo-note');
+        const authStatus = document.getElementById('auth-status');
         if (preview) {
             preview.src = '';
             preview.classList.remove('has-photo');
@@ -802,6 +805,11 @@ function updateInfoUI() {
 
         if (actions) actions.classList.toggle('disabled', !isAdmin);
         if (note) note.classList.toggle('hidden', isAdmin);
+        if (authStatus) {
+            authStatus.textContent = isAdmin
+                ? `Вы авторизованы: ${currentUserEmail || 'аккаунт'}`
+                : 'Вы не авторизованы';
+        }
 
         loadPhotoData(currentId).then((savedPhoto) => {
             if (!savedPhoto || currentId !== p.id) return;
@@ -1391,15 +1399,16 @@ function updateSelectionStyles() {
 
 async function initAuth() {
     const { data } = await supabaseClient.auth.getSession();
-    setAdminState(Boolean(data.session));
+    setAdminState(Boolean(data.session), data.session?.user?.email || '');
 
     supabaseClient.auth.onAuthStateChange((_event, session) => {
-        setAdminState(Boolean(session));
+        setAdminState(Boolean(session), session?.user?.email || '');
     });
 }
 
-function setAdminState(next) {
+function setAdminState(next, email = '') {
     isAdmin = next;
+    currentUserEmail = email;
     updateAdminUI();
     updateInfoUI();
 }
@@ -1408,7 +1417,9 @@ function updateAdminUI() {
     const adminBtn = document.getElementById('admin-login');
     if (!adminBtn) return;
     adminBtn.classList.toggle('admin-active', isAdmin);
-    adminBtn.title = isAdmin ? 'Выйти из админки' : 'Вход в админку';
+    adminBtn.title = isAdmin
+        ? `Выйти из админки (${currentUserEmail || 'аккаунт'})`
+        : 'Вход в админку';
     adminBtn.innerHTML = isAdmin
         ? '<i class="fa-solid fa-user-check"></i>'
         : '<i class="fa-solid fa-user-shield"></i>';
