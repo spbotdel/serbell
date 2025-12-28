@@ -2304,7 +2304,7 @@
         }
 
         function getAdminStorageNote() {
-            if (supabaseClient) {
+            if (SUPABASE_URL && SUPABASE_ANON_KEY) {
                 return 'Медиа синхронизируется через Supabase.';
             }
             return 'Изменения сохраняются в браузере. Для синхронизации между устройствами подключите Supabase.';
