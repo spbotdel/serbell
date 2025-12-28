@@ -1264,7 +1264,7 @@ async function loadPhotoData(personId) {
 
     if (error || !data?.photo_path) {
         if (error) console.error('Photo lookup error', error);
-        return '';
+        return await findPhotoByExtensions(personId);
     }
 
     const { data: publicData } = supabaseClient
@@ -1272,7 +1272,7 @@ async function loadPhotoData(personId) {
         .from(SUPABASE_BUCKET)
         .getPublicUrl(data.photo_path);
 
-    return publicData?.publicUrl || '';
+    return publicData?.publicUrl || await findPhotoByExtensions(personId);
 }
 
 async function savePhotoData(personId, file) {
@@ -1305,6 +1305,34 @@ async function savePhotoData(personId, file) {
     if (upsertError) {
         console.error('Photo metadata save failed', upsertError);
         alert('Фото загружено, но не удалось сохранить привязку.');
+    }
+}
+
+async function findPhotoByExtensions(personId) {
+    const extCandidates = ['jpg', 'jpeg', 'png', 'webp'];
+    for (const ext of extCandidates) {
+        const path = getPhotoStoragePath(personId, ext);
+        const { data: publicData } = supabaseClient
+            .storage
+            .from(SUPABASE_BUCKET)
+            .getPublicUrl(path);
+        const url = publicData?.publicUrl;
+        if (!url) continue;
+        const exists = await doesUrlExist(url);
+        if (exists) return url;
+    }
+    return '';
+}
+
+async function doesUrlExist(url) {
+    try {
+        const head = await fetch(url, { method: 'HEAD' });
+        if (head.ok) return true;
+        const get = await fetch(url, { method: 'GET' });
+        return get.ok;
+    } catch (error) {
+        console.error('Photo existence check failed', error);
+        return false;
     }
 }
 
