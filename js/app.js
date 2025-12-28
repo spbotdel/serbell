@@ -1251,7 +1251,7 @@ function onPersonClick(clickedId, fullRoot) {
 
 function getPhotoStoragePath(personId, filename) {
     const safeId = String(personId || '').replace(/[^a-zA-Z0-9_-]/g, '_');
-    return `${safeId}/${filename}`;
+    return `photo-${safeId}.${filename}`;
 }
 
 async function loadPhotoData(personId) {
@@ -1278,7 +1278,7 @@ async function loadPhotoData(personId) {
 async function savePhotoData(personId, file) {
     if (!personId || !file) return;
     const ext = String(file.name || '').split('.').pop() || 'jpg';
-    const path = getPhotoStoragePath(personId, `photo-${Date.now()}.${ext}`);
+    const path = getPhotoStoragePath(personId, ext);
     const { error } = await supabaseClient
         .storage
         .from(SUPABASE_BUCKET)
