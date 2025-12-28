@@ -18,6 +18,7 @@ let isAdmin = false;
 const SUPABASE_URL = 'https://imcfadcpjykqqgipqtws.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_lFv-zgjejU0UX_imTSs_1g_ZukPZopY';
 const SUPABASE_BUCKET = 'family-media';
+const SUPABASE_PHOTOS_TABLE = 'person_photos';
 const FAMILY_AUTH_EMAIL = 'family@serbell.local';
 
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -1255,31 +1256,29 @@ function getPhotoStoragePath(personId, filename) {
 
 async function loadPhotoData(personId) {
     if (!personId) return '';
-    const safeId = String(personId || '').replace(/[^a-zA-Z0-9_-]/g, '_');
     const { data, error } = await supabaseClient
-        .storage
-        .from(SUPABASE_BUCKET)
-        .list(safeId, { limit: 1, offset: 0, sortBy: { column: 'name', order: 'desc' } });
+        .from(SUPABASE_PHOTOS_TABLE)
+        .select('photo_path')
+        .eq('person_id', String(personId))
+        .maybeSingle();
 
-    if (error || !data || data.length === 0) return '';
-    const path = `${safeId}/${data[0].name}`;
-    const { data: signedData, error: signedError } = await supabaseClient
-        .storage
-        .from(SUPABASE_BUCKET)
-        .createSignedUrl(path, 60 * 60);
-
-    if (signedError) {
-        console.error('Photo signed URL error', signedError);
+    if (error || !data?.photo_path) {
+        if (error) console.error('Photo lookup error', error);
         return '';
     }
 
-    return signedData?.signedUrl || '';
+    const { data: publicData } = supabaseClient
+        .storage
+        .from(SUPABASE_BUCKET)
+        .getPublicUrl(data.photo_path);
+
+    return publicData?.publicUrl || '';
 }
 
 async function savePhotoData(personId, file) {
     if (!personId || !file) return;
     const ext = String(file.name || '').split('.').pop() || 'jpg';
-    const path = getPhotoStoragePath(personId, `photo.${ext}`);
+    const path = getPhotoStoragePath(personId, `photo-${Date.now()}.${ext}`);
     const { error } = await supabaseClient
         .storage
         .from(SUPABASE_BUCKET)
@@ -1293,6 +1292,19 @@ async function savePhotoData(personId, file) {
         console.error('Photo upload failed', error);
         alert('Не удалось загрузить фото. Попробуйте ещё раз.');
         return;
+    }
+
+    const { error: upsertError } = await supabaseClient
+        .from(SUPABASE_PHOTOS_TABLE)
+        .upsert({
+            person_id: String(personId),
+            photo_path: path,
+            updated_at: new Date().toISOString()
+        }, { onConflict: 'person_id' });
+
+    if (upsertError) {
+        console.error('Photo metadata save failed', upsertError);
+        alert('Фото загружено, но не удалось сохранить привязку.');
     }
 }
 
