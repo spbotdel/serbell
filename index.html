@@ -1654,7 +1654,7 @@
                     <button class="admin-btn" type="submit">Сохранить</button>
                     <button class="admin-btn secondary" type="button" id="admin-reset-fields">Сбросить</button>
                 </div>
-                <div class="admin-note">Изменения сохраняются в браузере. Для синхронизации между устройствами подключите Supabase.</div>
+                <div class="admin-note">${getAdminStorageNote()}</div>
             </form>
             ` : `
             <div class="admin-card">
@@ -2301,6 +2301,13 @@
 
             const bar = document.getElementById('admin-bar');
             if (bar) bar.classList.toggle('active', isAdmin);
+        }
+
+        function getAdminStorageNote() {
+            if (supabaseClient) {
+                return 'Медиа синхронизируется через Supabase.';
+            }
+            return 'Изменения сохраняются в браузере. Для синхронизации между устройствами подключите Supabase.';
         }
 
         function hasAdminPassword() {
