@@ -7,6 +7,12 @@
     <title>Семейное древо</title>
 
     <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script>
+        window.SUPABASE_URL = window.SUPABASE_URL || '';
+        window.SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || '';
+        window.SUPABASE_BUCKET = window.SUPABASE_BUCKET || 'person-media';
+    </script>
 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -472,29 +478,59 @@
             margin-top: 10px;
         }
 
-        .photo-wrap {
-            width: 120px;
-            height: 120px;
-            border-radius: 20px;
+        .media-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
+            gap: 10px;
+        }
+
+        .media-card {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            border-radius: 16px;
             overflow: hidden;
             border: 1px solid rgba(15, 23, 42, 0.08);
             background: rgba(15, 23, 42, 0.04);
-            display: flex;
-            align-items: center;
-            justify-content: center;
         }
 
-        .photo-wrap img {
+        .media-card img,
+        .media-card video {
             width: 100%;
             height: 100%;
             object-fit: cover;
+            display: block;
         }
 
-        .photo-placeholder {
+        .media-remove {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            width: 26px;
+            height: 26px;
+            border: none;
+            border-radius: 999px;
+            background: rgba(15, 23, 42, 0.85);
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 0 6px 12px rgba(15, 23, 42, 0.2);
+        }
+
+        .media-remove i {
+            font-size: 12px;
+        }
+
+        .media-empty {
             font-size: 11px;
             color: rgba(15, 23, 42, 0.5);
             text-align: center;
-            padding: 6px;
+            padding: 10px;
+            border-radius: 14px;
+            border: 1px dashed rgba(15, 23, 42, 0.18);
+            background: rgba(15, 23, 42, 0.02);
         }
 
         .rich-toolbar {
@@ -846,8 +882,9 @@
         let rootId = null;
         let rawGedText = '';
         let isAdmin = false;
-        let photoMap = {};
+        let mediaMap = {};
         let infoMap = {};
+        let supabaseClient = null;
 
         let currentId = null;
         let focusRawId = null;
@@ -877,16 +914,23 @@
 
         const MARRIAGE_ICON = 'fa-heart';
 
+        const SUPABASE_URL = window.SUPABASE_URL || '';
+        const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || '';
+        const SUPABASE_BUCKET = window.SUPABASE_BUCKET || 'person-media';
+
         const STORAGE_GED_KEY = 'serbell:ged';
         const STORAGE_ADMIN_KEY = 'serbell:admin';
         const STORAGE_UPDATED_KEY = 'serbell:ged:updatedAt';
+        const STORAGE_MEDIA_KEY = 'serbell:media';
         const STORAGE_PHOTO_KEY = 'serbell:photos';
         const STORAGE_ADMIN_HASH_KEY = 'serbell:admin:hash';
         const STORAGE_INFO_KEY = 'serbell:info';
 
         /* ================= INIT ================= */
         isAdmin = localStorage.getItem(STORAGE_ADMIN_KEY) === '1';
-        photoMap = loadPhotoMap();
+        supabaseClient = initSupabaseClient();
+        mediaMap = loadMediaMap();
+        migrateLegacyPhotoMap();
         infoMap = loadInfoMap();
 
         loadGedSource()
@@ -916,7 +960,7 @@
             currentId = null;
             focusRawId = null;
             focusResolvedId = null;
-            cleanupPhotoMap();
+            cleanupMediaMap();
             cleanupInfoMap();
             if (persist) {
                 localStorage.setItem(STORAGE_GED_KEY, rawGedText);
@@ -1382,11 +1426,11 @@
                 .attr('width', CARD_W).attr('height', CARD_H)
                 .attr('rx', 18);
 
-            const photo = getPhoto(p.id);
-            if (photo) {
+            const avatar = getPrimaryImage(p.id);
+            if (avatar) {
                 const size = 52;
                 group.append('image')
-                    .attr('href', photo)
+                    .attr('href', avatar)
                     .attr('x', -CARD_W / 2 + 12)
                     .attr('y', -size / 2)
                     .attr('width', size)
@@ -1428,6 +1472,7 @@
         function selectPerson(id, doRerender = true) {
             currentId = id;
             updateInfoUI();
+            void refreshPersonMedia(id);
 
             // Mobile: при выборе человека держим карточку в свернутом состоянии (peek)
             if (isPortrait()) {
@@ -1502,18 +1547,34 @@
             }
         }
 
-        function renderPhotoSection(personId) {
-            const photo = getPhoto(personId);
-            if (!photo) {
+        function renderMediaSection(personId) {
+            const media = getPersonMedia(personId);
+            if (!media.length) {
                 return `
-            <div class="photo-wrap">
-                <div class="photo-placeholder">Нет фото</div>
-            </div>`;
+            <div class="media-empty">Нет медиа</div>`;
             }
             return `
-            <div class="photo-wrap">
-                <img src="${escapeHtml(photo)}" alt="Фото" />
+            <div class="media-grid">
+                ${media.map(item => renderMediaCard(item, { removable: false })).join('')}
             </div>`;
+        }
+
+        function renderMediaCard(item, { removable }) {
+            const url = getMediaUrl(item);
+            const safeUrl = escapeHtml(url);
+            const isVideo = item?.media_type === 'video';
+            const removeButton = removable
+                ? `<button class="media-remove" type="button" data-media-id="${escapeHtml(item.id)}" aria-label="Удалить медиа">
+                        <i class="fa-solid fa-xmark"></i>
+                   </button>`
+                : '';
+            return `
+                <div class="media-card">
+                    ${isVideo
+                    ? `<video src="${safeUrl}" controls preload="metadata"></video>`
+                    : `<img src="${safeUrl}" alt="Медиа" loading="lazy" />`}
+                    ${removeButton}
+                </div>`;
         }
 
         function renderPersonInfoSection(personId) {
@@ -1532,7 +1593,7 @@
             const updatedLabel = updatedAt ? new Date(updatedAt).toLocaleString('ru-RU') : '—';
             const fileInfo = rawGedText ? `${rawGedText.split(/\r?\n/).length} строк` : 'нет данных';
             const sexValue = person?.sex || '';
-            const photo = getPhoto(person?.id);
+            const mediaItems = getPersonMedia(person?.id);
             const disabled = person ? '' : 'disabled';
             const addNote = person ? '' : '<div class="admin-note">Сначала выберите человека.</div>';
             const infoHtml = getPersonInfo(person?.id) || '';
@@ -1563,16 +1624,15 @@
                     <input id="admin-death" type="date" value="${escapeHtml(deathInput)}" />
                 </div>
                 <div class="admin-row">
-                    <label for="admin-photo">Фото</label>
-                    <div class="photo-wrap">
-                        ${photo ? `<img src="${escapeHtml(photo)}" alt="Фото" />` : `<div class="photo-placeholder">Фото не загружено</div>`}
-                    </div>
-                    <input id="admin-photo" type="file" accept="image/*" />
-                    <div id="admin-photo-status" class="admin-note"></div>
-                    <div class="admin-note">Фотографии должны лежать в папке <strong>./img/family</strong>.</div>
-                    <div class="admin-actions">
-                        <button class="admin-btn secondary" type="button" id="admin-remove-photo">Удалить фото</button>
-                    </div>
+                    <label for="admin-media">Медиа</label>
+                    ${mediaItems.length ? `
+                        <div class="media-grid">
+                            ${mediaItems.map(item => renderMediaCard(item, { removable: true })).join('')}
+                        </div>
+                    ` : `<div class="media-empty">Медиа не загружено</div>`}
+                    <input id="admin-media" type="file" accept="image/*,video/*" multiple />
+                    <div id="admin-media-status" class="admin-note"></div>
+                    <div class="admin-note">Поддерживаются изображения и видео. Можно выбирать несколько файлов.</div>
                 </div>
                 <div class="admin-row">
                     <label>Информация о человеке</label>
@@ -1765,7 +1825,7 @@
                 const b = formatGedcomDate(p?.birth || '');
                 const d = formatGedcomDate(p?.death || '');
                 const sex = (p?.sex === 'M') ? 'Мужчина' : (p?.sex === 'F') ? 'Женщина' : '—';
-                const photoMarkup = renderPhotoSection(p?.id);
+                const mediaMarkup = renderMediaSection(p?.id);
                 const infoMarkup = renderPersonInfoSection(p?.id);
 
                 const siblings = getSiblingIds(currentId).map(id => data.people[id]).filter(Boolean);
@@ -1773,7 +1833,7 @@
 
                 info.innerHTML = `
           <div style="font-weight:900;font-size:16px;color:#0f172a">${escapeHtml(p?.name || '')}</div>
-          ${photoMarkup}
+          ${mediaMarkup}
 
           <div class="pill"><i class="fa-solid fa-user"></i> <span>${escapeHtml(sex)}</span></div>
           <div class="pill"><i class="fa-solid fa-cake-candles"></i> <span>${escapeHtml(b || '—')}</span></div>
@@ -1950,14 +2010,45 @@
             updateInfoUI();
         }
 
-        function loadPhotoMap() {
+        function initSupabaseClient() {
+            if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
+            if (!window.supabase?.createClient) return null;
+            return window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        }
+
+        function loadMediaMap() {
             try {
-                const raw = localStorage.getItem(STORAGE_PHOTO_KEY);
+                const raw = localStorage.getItem(STORAGE_MEDIA_KEY);
                 if (!raw) return {};
                 const parsed = JSON.parse(raw);
                 return parsed && typeof parsed === 'object' ? parsed : {};
             } catch {
                 return {};
+            }
+        }
+
+        function migrateLegacyPhotoMap() {
+            if (Object.keys(mediaMap).length) return;
+            try {
+                const raw = localStorage.getItem(STORAGE_PHOTO_KEY);
+                if (!raw) return;
+                const parsed = JSON.parse(raw);
+                if (!parsed || typeof parsed !== 'object') return;
+                Object.entries(parsed).forEach(([personId, path]) => {
+                    if (!path) return;
+                    const item = {
+                        id: crypto.randomUUID(),
+                        person_id: personId,
+                        media_path: path,
+                        media_type: 'image',
+                        created_at: new Date().toISOString()
+                    };
+                    if (!mediaMap[personId]) mediaMap[personId] = [];
+                    mediaMap[personId].push(item);
+                });
+                persistMediaMap();
+            } catch {
+                return;
             }
         }
 
@@ -1972,29 +2063,54 @@
             }
         }
 
-        function persistPhotoMap() {
-            localStorage.setItem(STORAGE_PHOTO_KEY, JSON.stringify(photoMap));
+        function persistMediaMap() {
+            localStorage.setItem(STORAGE_MEDIA_KEY, JSON.stringify(mediaMap));
         }
 
         function persistInfoMap() {
             localStorage.setItem(STORAGE_INFO_KEY, JSON.stringify(infoMap));
         }
 
-        function getPhoto(personId) {
-            return personId ? photoMap[personId] || '' : '';
+        function getPersonMedia(personId) {
+            return personId && mediaMap[personId] ? [...mediaMap[personId]] : [];
         }
 
-        function setPhoto(personId, dataUrl) {
+        function setPersonMedia(personId, items) {
             if (!personId) return;
-            if (dataUrl) photoMap[personId] = dataUrl;
-            else delete photoMap[personId];
-            persistPhotoMap();
+            if (items && items.length) mediaMap[personId] = items;
+            else delete mediaMap[personId];
+            persistMediaMap();
         }
 
-        function normalizePhotoFileName(fileName) {
-            const clean = String(fileName || '').trim();
-            if (!clean) return '';
-            return `./img/family/${clean}`;
+        function addMediaItem(personId, item) {
+            if (!personId || !item) return;
+            const next = getPersonMedia(personId);
+            next.unshift(item);
+            setPersonMedia(personId, next);
+        }
+
+        function removeMediaItem(personId, mediaId) {
+            if (!personId || !mediaId) return;
+            const next = getPersonMedia(personId).filter(item => item.id !== mediaId);
+            setPersonMedia(personId, next);
+        }
+
+        function getMediaUrl(item) {
+            if (!item?.media_path) return '';
+            const path = String(item.media_path);
+            if (path.startsWith('http') || path.startsWith('data:') || path.startsWith('blob:') || path.startsWith('./') || path.startsWith('/')) {
+                return path;
+            }
+            if (!supabaseClient) return path;
+            const { data } = supabaseClient.storage.from(SUPABASE_BUCKET).getPublicUrl(path);
+            return data?.publicUrl || path;
+        }
+
+        function getPrimaryImage(personId) {
+            const media = getPersonMedia(personId);
+            const image = media.find(item => item.media_type === 'image');
+            if (!image) return '';
+            return getMediaUrl(image);
         }
 
         function getPersonInfo(personId) {
@@ -2008,12 +2124,12 @@
             persistInfoMap();
         }
 
-        function cleanupPhotoMap() {
+        function cleanupMediaMap() {
             if (!data?.people) return;
-            Object.keys(photoMap).forEach(id => {
-                if (!data.people[id]) delete photoMap[id];
+            Object.keys(mediaMap).forEach(id => {
+                if (!data.people[id]) delete mediaMap[id];
             });
-            persistPhotoMap();
+            persistMediaMap();
         }
 
         function cleanupInfoMap() {
@@ -2022,6 +2138,137 @@
                 if (!data.people[id]) delete infoMap[id];
             });
             persistInfoMap();
+        }
+
+        async function refreshPersonMedia(personId) {
+            if (!personId || !supabaseClient) return;
+            const { data: rows, error } = await supabaseClient
+                .from('person_media')
+                .select('id, person_id, media_path, media_type, created_at')
+                .eq('person_id', personId)
+                .order('created_at', { ascending: false });
+            if (error) {
+                console.warn('media fetch error', error);
+                return;
+            }
+            setPersonMedia(personId, rows || []);
+            if (currentId === personId) updateInfoUI();
+        }
+
+        function getMediaType(file) {
+            if (file?.type?.startsWith('video/')) return 'video';
+            return 'image';
+        }
+
+        function buildUniqueMediaPath(personId, file) {
+            const rawExt = String(file?.name || '').split('.').pop();
+            const ext = rawExt && rawExt !== file?.name ? `.${rawExt.toLowerCase()}` : '';
+            return `${personId}/${crypto.randomUUID()}${ext}`;
+        }
+
+        function readFileAsDataUrl(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = () => reject(reader.error);
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function uploadSingleMedia(personId, file) {
+            const mediaType = getMediaType(file);
+            if (supabaseClient) {
+                const path = buildUniqueMediaPath(personId, file);
+                const { error: uploadError } = await supabaseClient.storage
+                    .from(SUPABASE_BUCKET)
+                    .upload(path, file, { upsert: false });
+                if (uploadError) throw uploadError;
+                const { data: inserted, error: insertError } = await supabaseClient
+                    .from('person_media')
+                    .insert({
+                        person_id: personId,
+                        media_path: path,
+                        media_type: mediaType
+                    })
+                    .select('id, person_id, media_path, media_type, created_at')
+                    .single();
+                if (insertError) throw insertError;
+                return inserted;
+            }
+            const dataUrl = await readFileAsDataUrl(file);
+            return {
+                id: crypto.randomUUID(),
+                person_id: personId,
+                media_path: dataUrl,
+                media_type: mediaType,
+                created_at: new Date().toISOString()
+            };
+        }
+
+        async function uploadMediaFiles(personId, files) {
+            const list = Array.from(files || []);
+            if (!personId || !list.length) return;
+            const status = document.getElementById('admin-media-status');
+            if (status) status.textContent = 'Загрузка...';
+
+            const results = await Promise.allSettled(list.map(file => uploadSingleMedia(personId, file)));
+            const successes = results.filter(r => r.status === 'fulfilled').map(r => r.value);
+            if (successes.length) {
+                const next = [...successes, ...getPersonMedia(personId)];
+                setPersonMedia(personId, next);
+                render(false);
+                updateInfoUI();
+            }
+
+            const failed = results.filter(r => r.status === 'rejected');
+            if (status) {
+                if (failed.length) {
+                    status.textContent = `Загружено: ${successes.length}, ошибка: ${failed.length}`;
+                } else {
+                    status.textContent = `Загружено: ${successes.length}`;
+                }
+            }
+        }
+
+        async function deleteMediaEntry(personId, mediaId) {
+            if (!personId || !mediaId) return;
+            const items = getPersonMedia(personId);
+            const target = items.find(item => item.id === mediaId);
+            if (!target) return;
+            if (supabaseClient) {
+                const { error: deleteError } = await supabaseClient
+                    .from('person_media')
+                    .delete()
+                    .eq('id', mediaId);
+                if (deleteError) {
+                    console.warn('media delete error', deleteError);
+                    return;
+                }
+                const path = target.media_path || '';
+                if (path && !path.startsWith('http') && !path.startsWith('data:')) {
+                    await supabaseClient.storage.from(SUPABASE_BUCKET).remove([path]);
+                }
+            }
+            removeMediaItem(personId, mediaId);
+            render(false);
+            updateInfoUI();
+        }
+
+        async function deleteAllMediaForPerson(personId) {
+            if (!personId) return;
+            const items = getPersonMedia(personId);
+            setPersonMedia(personId, []);
+            if (!supabaseClient) return;
+            const paths = items
+                .map(item => item.media_path)
+                .filter(path => path && !path.startsWith('http') && !path.startsWith('data:'));
+            if (paths.length) {
+                await supabaseClient.storage.from(SUPABASE_BUCKET).remove(paths);
+            }
+            await supabaseClient
+                .from('person_media')
+                .delete()
+                .eq('person_id', personId);
         }
 
         function updateAdminUI() {
@@ -2237,7 +2484,7 @@
             const p = data.people[personId];
             if (!p) return;
             delete data.people[personId];
-            setPhoto(personId, '');
+            void deleteAllMediaForPerson(personId);
 
             Object.values(data.fams || {}).forEach(fam => {
                 if (fam.husb === personId) fam.husb = null;
@@ -2259,7 +2506,7 @@
             });
 
             persistCurrentData();
-            cleanupPhotoMap();
+            cleanupMediaMap();
             cleanupInfoMap();
             rootId = findRoot();
         }
@@ -2355,33 +2602,23 @@
                 };
             }
 
-            const photoInput = document.getElementById('admin-photo');
-            if (photoInput && person) {
-                photoInput.onchange = (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    const path = normalizePhotoFileName(file.name);
-                    if (path) {
-                        setPhoto(person.id, path);
-                        render(false);
-                        updateInfoUI();
-                        const status = document.getElementById('admin-photo-status');
-                        if (status) status.textContent = 'Сохранено';
-                    }
-                    photoInput.value = '';
+            const mediaInput = document.getElementById('admin-media');
+            if (mediaInput && person) {
+                mediaInput.onchange = async (e) => {
+                    const files = Array.from(e.target.files || []);
+                    if (!files.length) return;
+                    await uploadMediaFiles(person.id, files);
+                    mediaInput.value = '';
                 };
             }
 
-            const removePhoto = document.getElementById('admin-remove-photo');
-            if (removePhoto && person) {
-                removePhoto.onclick = () => {
-                    setPhoto(person.id, '');
-                    const status = document.getElementById('admin-photo-status');
-                    if (status) status.textContent = '';
-                    updateInfoUI();
-                    render(false);
-                };
-            }
+            document.querySelectorAll('.media-remove').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const mediaId = btn.getAttribute('data-media-id');
+                    if (!mediaId || !person) return;
+                    void deleteMediaEntry(person.id, mediaId);
+                });
+            });
 
             const addRelativeForm = document.getElementById('admin-add-relative');
             if (addRelativeForm && person) {
