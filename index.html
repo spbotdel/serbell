@@ -863,6 +863,8 @@
             <h2 id="admin-title">Вход администратора</h2>
             <div id="admin-note" class="admin-note">Введите пароль администратора, чтобы открыть режим управления.</div>
             <form id="admin-login-form" class="admin-row">
+                <label for="admin-email">Почта</label>
+                <input id="admin-email" type="email" autocomplete="email" required />
                 <label for="admin-password">Пароль</label>
                 <input id="admin-password" type="password" autocomplete="current-password" required />
                 <label id="admin-password-confirm-label" for="admin-password-confirm" style="display:none;">Повторите пароль</label>
@@ -917,6 +919,7 @@
         const SUPABASE_URL = window.SUPABASE_URL || '';
         const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || '';
         const SUPABASE_BUCKET = window.SUPABASE_BUCKET || 'person-media';
+        const DEFAULT_ADMIN_PASSWORD = 'poru4ik2087';
 
         const STORAGE_GED_KEY = 'serbell:ged';
         const STORAGE_ADMIN_KEY = 'serbell:admin';
@@ -924,6 +927,7 @@
         const STORAGE_MEDIA_KEY = 'serbell:media';
         const STORAGE_PHOTO_KEY = 'serbell:photos';
         const STORAGE_ADMIN_HASH_KEY = 'serbell:admin:hash';
+        const STORAGE_ADMIN_EMAIL_KEY = 'serbell:admin:email';
         const STORAGE_INFO_KEY = 'serbell:info';
 
         /* ================= INIT ================= */
@@ -932,6 +936,7 @@
         mediaMap = loadMediaMap();
         migrateLegacyPhotoMap();
         infoMap = loadInfoMap();
+        ensureDefaultAdminPassword();
 
         loadGedSource()
             .then(t => {
@@ -2071,6 +2076,20 @@
             localStorage.setItem(STORAGE_INFO_KEY, JSON.stringify(infoMap));
         }
 
+        async function ensureDefaultAdminPassword() {
+            if (hasAdminPassword()) return;
+            const hash = await hashPassword(DEFAULT_ADMIN_PASSWORD);
+            localStorage.setItem(STORAGE_ADMIN_HASH_KEY, hash);
+        }
+
+        function loadAdminEmail() {
+            return localStorage.getItem(STORAGE_ADMIN_EMAIL_KEY) || '';
+        }
+
+        function persistAdminEmail(value) {
+            if (value) localStorage.setItem(STORAGE_ADMIN_EMAIL_KEY, value);
+        }
+
         function getPersonMedia(personId) {
             return personId && mediaMap[personId] ? [...mediaMap[personId]] : [];
         }
@@ -2297,6 +2316,7 @@
             const modal = document.getElementById('admin-modal');
             const error = document.getElementById('admin-error');
             const input = document.getElementById('admin-password');
+            const emailInput = document.getElementById('admin-email');
             const confirmLabel = document.getElementById('admin-password-confirm-label');
             const confirmInput = document.getElementById('admin-password-confirm');
             const title = document.getElementById('admin-title');
@@ -2305,16 +2325,17 @@
             if (error) error.textContent = '';
             input.value = '';
             if (confirmInput) confirmInput.value = '';
+            if (emailInput) emailInput.value = loadAdminEmail();
 
             const needsSetup = !hasAdminPassword();
             if (confirmLabel && confirmInput) {
-                confirmLabel.style.display = needsSetup ? 'block' : 'none';
-                confirmInput.style.display = needsSetup ? 'block' : 'none';
-                confirmInput.required = needsSetup;
+                confirmLabel.style.display = 'none';
+                confirmInput.style.display = 'none';
+                confirmInput.required = false;
             }
-            if (title) title.textContent = needsSetup ? 'Создать пароль администратора' : 'Вход администратора';
+            if (title) title.textContent = 'Вход администратора';
             if (note) note.textContent = needsSetup
-                ? 'Создайте пароль администратора. Он сохранится в вашем браузере.'
+                ? `Пароль по умолчанию: ${DEFAULT_ADMIN_PASSWORD}`
                 : 'Введите пароль администратора, чтобы открыть режим управления.';
 
             modal.classList.add('open');
@@ -2837,25 +2858,19 @@
             if (adminForm) {
                 adminForm.addEventListener('submit', async (e) => {
                     e.preventDefault();
+                    const emailInput = document.getElementById('admin-email');
                     const input = document.getElementById('admin-password');
                     const confirmInput = document.getElementById('admin-password-confirm');
                     const needsSetup = !hasAdminPassword();
+                    const emailValue = emailInput?.value.trim() || '';
+                    if (!emailValue) {
+                        if (adminError) adminError.textContent = 'Введите почту.';
+                        return;
+                    }
+                    persistAdminEmail(emailValue);
                     const value = input?.value || '';
                     if (!value || value.length < 6) {
                         if (adminError) adminError.textContent = 'Пароль должен быть минимум 6 символов.';
-                        return;
-                    }
-
-                    if (needsSetup) {
-                        const confirmValue = confirmInput?.value || '';
-                        if (value !== confirmValue) {
-                            if (adminError) adminError.textContent = 'Пароли не совпадают.';
-                            return;
-                        }
-                        const hash = await hashPassword(value);
-                        localStorage.setItem(STORAGE_ADMIN_HASH_KEY, hash);
-                        setAdminState(true);
-                        closeAdminModal();
                         return;
                     }
 
@@ -2864,9 +2879,21 @@
                     if (storedHash && storedHash === hash) {
                         setAdminState(true);
                         closeAdminModal();
-                    } else {
-                        if (adminError) adminError.textContent = 'Неверный пароль.';
+                        return;
                     }
+                    if (needsSetup && value === DEFAULT_ADMIN_PASSWORD) {
+                        localStorage.setItem(STORAGE_ADMIN_HASH_KEY, hash);
+                        setAdminState(true);
+                        closeAdminModal();
+                        return;
+                    }
+                    if (needsSetup && confirmInput?.value && value === confirmInput.value) {
+                        localStorage.setItem(STORAGE_ADMIN_HASH_KEY, hash);
+                        setAdminState(true);
+                        closeAdminModal();
+                        return;
+                    }
+                    if (adminError) adminError.textContent = 'Неверный пароль.';
                 });
             }
             if (adminCancel) {
