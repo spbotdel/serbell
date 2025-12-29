@@ -2359,11 +2359,7 @@
             if (url && anonKey) {
                 return 'Медиа синхронизируется через Supabase.';
             }
-            const missing = [];
-            if (!url) missing.push('SUPABASE_URL');
-            if (!anonKey) missing.push('SUPABASE_ANON_KEY');
-            const suffix = missing.length ? ` (не задано: ${missing.join(', ')})` : '';
-            return `Изменения сохраняются в браузере. Для синхронизации между устройствами подключите Supabase.${suffix}`;
+            return 'Изменения сохраняются в браузере. Для синхронизации между устройствами подключите Supabase и заполните поля ниже.';
         }
 
         function hasAdminPassword() {
