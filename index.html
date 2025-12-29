@@ -1602,6 +1602,7 @@
             const sexValue = person?.sex || '';
             const mediaItems = getPersonMedia(person?.id);
             const { url: supaUrl, anonKey: supaKey, bucket: supaBucket } = getSupabaseConfig();
+            const storageNote = getAdminStorageNote();
             const disabled = person ? '' : 'disabled';
             const addNote = person ? '' : '<div class="admin-note">Сначала выберите человека.</div>';
             const infoHtml = getPersonInfo(person?.id) || '';
@@ -1656,7 +1657,7 @@
                     <button class="admin-btn" type="submit">Сохранить</button>
                     <button class="admin-btn secondary" type="button" id="admin-reset-fields">Сбросить</button>
                 </div>
-                <div class="admin-note">${getAdminStorageNote()}</div>
+                ${storageNote ? `<div class="admin-note">${storageNote}</div>` : ''}
             </form>
             ` : `
             <div class="admin-card">
@@ -2359,7 +2360,7 @@
             if (url && anonKey) {
                 return 'Медиа синхронизируется через Supabase.';
             }
-            return 'Изменения сохраняются в браузере. Для синхронизации между устройствами подключите Supabase и заполните поля ниже.';
+            return '';
         }
 
         function hasAdminPassword() {
