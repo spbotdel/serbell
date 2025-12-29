@@ -1642,6 +1642,7 @@
                     <input id="admin-media" type="file" accept="image/*,video/*" multiple />
                     <div id="admin-media-status" class="admin-note"></div>
                     <div class="admin-note">Поддерживаются изображения и видео. Можно выбирать несколько файлов.</div>
+                    ${supaUrl && supaKey ? '' : '<div class="admin-note">Чтобы медиа были доступны на других устройствах, настройте Supabase ниже.</div>'}
                 </div>
                 <div class="admin-row">
                     <label>Информация о человеке</label>
@@ -2070,6 +2071,12 @@
             return window.supabase.createClient(url, anonKey);
         }
 
+        function ensureSupabaseClient() {
+            if (supabaseClient) return supabaseClient;
+            supabaseClient = initSupabaseClient();
+            return supabaseClient;
+        }
+
         function loadMediaMap() {
             try {
                 const raw = localStorage.getItem(STORAGE_MEDIA_KEY);
@@ -2169,9 +2176,10 @@
             if (path.startsWith('http') || path.startsWith('data:') || path.startsWith('blob:') || path.startsWith('./') || path.startsWith('/')) {
                 return path;
             }
-            if (!supabaseClient) return path;
+            const client = ensureSupabaseClient();
+            if (!client) return path;
             const { bucket } = getSupabaseConfig();
-            const { data } = supabaseClient.storage.from(bucket).getPublicUrl(path);
+            const { data } = client.storage.from(bucket).getPublicUrl(path);
             return data?.publicUrl || path;
         }
 
@@ -2210,8 +2218,9 @@
         }
 
         async function refreshPersonMedia(personId) {
-            if (!personId || !supabaseClient) return;
-            const { data: rows, error } = await supabaseClient
+            const client = ensureSupabaseClient();
+            if (!personId || !client) return;
+            const { data: rows, error } = await client
                 .from('person_media')
                 .select('id, person_id, media_path, media_type, created_at')
                 .eq('person_id', personId)
@@ -2246,14 +2255,15 @@
 
         async function uploadSingleMedia(personId, file) {
             const mediaType = getMediaType(file);
-            if (supabaseClient) {
+            const client = ensureSupabaseClient();
+            if (client) {
                 const path = buildUniqueMediaPath(personId, file);
                 const { bucket } = getSupabaseConfig();
-                const { error: uploadError } = await supabaseClient.storage
+                const { error: uploadError } = await client.storage
                     .from(bucket)
                     .upload(path, file, { upsert: false });
                 if (uploadError) throw uploadError;
-                const { data: inserted, error: insertError } = await supabaseClient
+                const { data: inserted, error: insertError } = await client
                     .from('person_media')
                     .insert({
                         person_id: personId,
@@ -2279,6 +2289,11 @@
             const list = Array.from(files || []);
             if (!personId || !list.length) return;
             const status = document.getElementById('admin-media-status');
+            const client = ensureSupabaseClient();
+            if (!client) {
+                if (status) status.textContent = 'Настройте Supabase для синхронизации медиа.';
+                return;
+            }
             if (status) status.textContent = 'Загрузка...';
 
             const results = await Promise.allSettled(list.map(file => uploadSingleMedia(personId, file)));
@@ -2305,8 +2320,9 @@
             const items = getPersonMedia(personId);
             const target = items.find(item => item.id === mediaId);
             if (!target) return;
-            if (supabaseClient) {
-                const { error: deleteError } = await supabaseClient
+            const client = ensureSupabaseClient();
+            if (client) {
+                const { error: deleteError } = await client
                     .from('person_media')
                     .delete()
                     .eq('id', mediaId);
@@ -2317,7 +2333,7 @@
                 const path = target.media_path || '';
                 if (path && !path.startsWith('http') && !path.startsWith('data:')) {
                     const { bucket } = getSupabaseConfig();
-                    await supabaseClient.storage.from(bucket).remove([path]);
+                    await client.storage.from(bucket).remove([path]);
                 }
             }
             removeMediaItem(personId, mediaId);
@@ -2329,15 +2345,16 @@
             if (!personId) return;
             const items = getPersonMedia(personId);
             setPersonMedia(personId, []);
-            if (!supabaseClient) return;
+            const client = ensureSupabaseClient();
+            if (!client) return;
             const paths = items
                 .map(item => item.media_path)
                 .filter(path => path && !path.startsWith('http') && !path.startsWith('data:'));
             if (paths.length) {
                 const { bucket } = getSupabaseConfig();
-                await supabaseClient.storage.from(bucket).remove(paths);
+                await client.storage.from(bucket).remove(paths);
             }
-            await supabaseClient
+            await client
                 .from('person_media')
                 .delete()
                 .eq('person_id', personId);
