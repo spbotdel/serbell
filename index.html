@@ -1733,8 +1733,17 @@
                         <label for="admin-supabase-bucket">SUPABASE_BUCKET</label>
                         <input id="admin-supabase-bucket" type="text" value="${escapeHtml(supaBucket)}" placeholder="person-media" />
                     </div>
+                    <div class="admin-row">
+                        <label for="admin-supabase-email">Supabase email</label>
+                        <input id="admin-supabase-email" type="email" placeholder="admin@example.com" />
+                    </div>
+                    <div class="admin-row">
+                        <label for="admin-supabase-password">Supabase пароль</label>
+                        <input id="admin-supabase-password" type="password" autocomplete="current-password" />
+                    </div>
                     <div class="admin-actions">
                         <button class="admin-btn" type="submit">Сохранить Supabase</button>
+                        <button class="admin-btn secondary" type="button" id="admin-supabase-login">Войти в Supabase</button>
                     </div>
                     <div id="admin-supabase-status" class="admin-note"></div>
                 </form>
@@ -2295,6 +2304,11 @@
                 if (status) status.textContent = 'Подключите Supabase, чтобы медиа были доступны на других устройствах.';
                 return;
             }
+            const { data: sessionData } = await client.auth.getSession();
+            if (!sessionData?.session) {
+                if (status) status.textContent = 'Нужно войти в Supabase, чтобы загружать медиа.';
+                return;
+            }
             if (status) status.textContent = 'Загрузка...';
 
             const results = await Promise.allSettled(list.map(file => uploadSingleMedia(personId, file)));
@@ -2768,6 +2782,30 @@
                     if (status) status.textContent = 'Supabase подключен.';
                     updateInfoUI();
                     if (currentId) void refreshPersonMedia(currentId);
+                };
+            }
+
+            const supabaseLogin = document.getElementById('admin-supabase-login');
+            if (supabaseLogin) {
+                supabaseLogin.onclick = async () => {
+                    const status = document.getElementById('admin-supabase-status');
+                    const email = document.getElementById('admin-supabase-email')?.value.trim() || '';
+                    const password = document.getElementById('admin-supabase-password')?.value || '';
+                    if (!email || !password) {
+                        if (status) status.textContent = 'Введите email и пароль Supabase.';
+                        return;
+                    }
+                    const client = ensureSupabaseClient();
+                    if (!client) {
+                        if (status) status.textContent = 'Сначала сохраните Supabase URL и ключ.';
+                        return;
+                    }
+                    const { error } = await client.auth.signInWithPassword({ email, password });
+                    if (error) {
+                        if (status) status.textContent = `Ошибка входа: ${error.message}`;
+                        return;
+                    }
+                    if (status) status.textContent = 'Вход выполнен.';
                 };
             }
 
