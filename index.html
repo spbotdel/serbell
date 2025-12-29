@@ -916,9 +916,6 @@
 
         const MARRIAGE_ICON = 'fa-heart';
 
-        const SUPABASE_URL = window.SUPABASE_URL || '';
-        const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || '';
-        const SUPABASE_BUCKET = window.SUPABASE_BUCKET || 'person-media';
         const DEFAULT_ADMIN_PASSWORD = 'poru4ik2087';
 
         const STORAGE_GED_KEY = 'serbell:ged';
@@ -928,10 +925,14 @@
         const STORAGE_PHOTO_KEY = 'serbell:photos';
         const STORAGE_ADMIN_HASH_KEY = 'serbell:admin:hash';
         const STORAGE_ADMIN_EMAIL_KEY = 'serbell:admin:email';
+        const STORAGE_SUPABASE_URL_KEY = 'serbell:supabase:url';
+        const STORAGE_SUPABASE_ANON_KEY = 'serbell:supabase:anon';
+        const STORAGE_SUPABASE_BUCKET_KEY = 'serbell:supabase:bucket';
         const STORAGE_INFO_KEY = 'serbell:info';
 
         /* ================= INIT ================= */
         isAdmin = localStorage.getItem(STORAGE_ADMIN_KEY) === '1';
+        hydrateSupabaseConfig();
         supabaseClient = initSupabaseClient();
         mediaMap = loadMediaMap();
         migrateLegacyPhotoMap();
@@ -1600,6 +1601,7 @@
             const fileInfo = rawGedText ? `${rawGedText.split(/\r?\n/).length} строк` : 'нет данных';
             const sexValue = person?.sex || '';
             const mediaItems = getPersonMedia(person?.id);
+            const { url: supaUrl, anonKey: supaKey, bucket: supaBucket } = getSupabaseConfig();
             const disabled = person ? '' : 'disabled';
             const addNote = person ? '' : '<div class="admin-note">Сначала выберите человека.</div>';
             const infoHtml = getPersonInfo(person?.id) || '';
@@ -1715,6 +1717,24 @@
                         <button class="admin-btn secondary" type="button" id="admin-delete-person" ${disabled}>Удалить выбранного</button>
                     </div>
                 </div>
+                <form id="admin-supabase" class="admin-card">
+                    <div class="section-title">Supabase синхронизация</div>
+                    <div class="admin-row">
+                        <label for="admin-supabase-url">SUPABASE_URL</label>
+                        <input id="admin-supabase-url" type="text" value="${escapeHtml(supaUrl)}" placeholder="https://project.supabase.co" />
+                    </div>
+                    <div class="admin-row">
+                        <label for="admin-supabase-key">SUPABASE_ANON_KEY</label>
+                        <input id="admin-supabase-key" type="text" value="${escapeHtml(supaKey)}" placeholder="anon key" />
+                    </div>
+                    <div class="admin-row">
+                        <label for="admin-supabase-bucket">SUPABASE_BUCKET</label>
+                        <input id="admin-supabase-bucket" type="text" value="${escapeHtml(supaBucket)}" placeholder="person-media" />
+                    </div>
+                    <div class="admin-actions">
+                        <button class="admin-btn" type="submit">Сохранить Supabase</button>
+                    </div>
+                </form>
                 ${editForm}
             </div>`;
         }
@@ -2016,10 +2036,37 @@
             updateInfoUI();
         }
 
+        function getSupabaseConfig() {
+            return {
+                url: window.SUPABASE_URL || '',
+                anonKey: window.SUPABASE_ANON_KEY || '',
+                bucket: window.SUPABASE_BUCKET || 'person-media'
+            };
+        }
+
+        function hydrateSupabaseConfig() {
+            const storedUrl = localStorage.getItem(STORAGE_SUPABASE_URL_KEY) || '';
+            const storedKey = localStorage.getItem(STORAGE_SUPABASE_ANON_KEY) || '';
+            const storedBucket = localStorage.getItem(STORAGE_SUPABASE_BUCKET_KEY) || '';
+            if (!window.SUPABASE_URL && storedUrl) window.SUPABASE_URL = storedUrl;
+            if (!window.SUPABASE_ANON_KEY && storedKey) window.SUPABASE_ANON_KEY = storedKey;
+            if (!window.SUPABASE_BUCKET && storedBucket) window.SUPABASE_BUCKET = storedBucket;
+        }
+
+        function persistSupabaseConfig({ url, anonKey, bucket }) {
+            if (url) localStorage.setItem(STORAGE_SUPABASE_URL_KEY, url);
+            if (anonKey) localStorage.setItem(STORAGE_SUPABASE_ANON_KEY, anonKey);
+            if (bucket) localStorage.setItem(STORAGE_SUPABASE_BUCKET_KEY, bucket);
+            window.SUPABASE_URL = url;
+            window.SUPABASE_ANON_KEY = anonKey;
+            window.SUPABASE_BUCKET = bucket;
+        }
+
         function initSupabaseClient() {
-            if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
+            const { url, anonKey } = getSupabaseConfig();
+            if (!url || !anonKey) return null;
             if (!window.supabase?.createClient) return null;
-            return window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            return window.supabase.createClient(url, anonKey);
         }
 
         function loadMediaMap() {
@@ -2122,7 +2169,8 @@
                 return path;
             }
             if (!supabaseClient) return path;
-            const { data } = supabaseClient.storage.from(SUPABASE_BUCKET).getPublicUrl(path);
+            const { bucket } = getSupabaseConfig();
+            const { data } = supabaseClient.storage.from(bucket).getPublicUrl(path);
             return data?.publicUrl || path;
         }
 
@@ -2199,8 +2247,9 @@
             const mediaType = getMediaType(file);
             if (supabaseClient) {
                 const path = buildUniqueMediaPath(personId, file);
+                const { bucket } = getSupabaseConfig();
                 const { error: uploadError } = await supabaseClient.storage
-                    .from(SUPABASE_BUCKET)
+                    .from(bucket)
                     .upload(path, file, { upsert: false });
                 if (uploadError) throw uploadError;
                 const { data: inserted, error: insertError } = await supabaseClient
@@ -2266,7 +2315,8 @@
                 }
                 const path = target.media_path || '';
                 if (path && !path.startsWith('http') && !path.startsWith('data:')) {
-                    await supabaseClient.storage.from(SUPABASE_BUCKET).remove([path]);
+                    const { bucket } = getSupabaseConfig();
+                    await supabaseClient.storage.from(bucket).remove([path]);
                 }
             }
             removeMediaItem(personId, mediaId);
@@ -2283,7 +2333,8 @@
                 .map(item => item.media_path)
                 .filter(path => path && !path.startsWith('http') && !path.startsWith('data:'));
             if (paths.length) {
-                await supabaseClient.storage.from(SUPABASE_BUCKET).remove(paths);
+                const { bucket } = getSupabaseConfig();
+                await supabaseClient.storage.from(bucket).remove(paths);
             }
             await supabaseClient
                 .from('person_media')
@@ -2304,14 +2355,13 @@
         }
 
         function getAdminStorageNote() {
-            const url = window.SUPABASE_URL || '';
-            const key = window.SUPABASE_ANON_KEY || '';
-            if (url && key) {
+            const { url, anonKey } = getSupabaseConfig();
+            if (url && anonKey) {
                 return 'Медиа синхронизируется через Supabase.';
             }
             const missing = [];
             if (!url) missing.push('SUPABASE_URL');
-            if (!key) missing.push('SUPABASE_ANON_KEY');
+            if (!anonKey) missing.push('SUPABASE_ANON_KEY');
             const suffix = missing.length ? ` (не задано: ${missing.join(', ')})` : '';
             return `Изменения сохраняются в браузере. Для синхронизации между устройствами подключите Supabase.${suffix}`;
         }
@@ -2670,6 +2720,22 @@
                     render(true);
                     updateInfoUI();
                     addRelativeForm.reset();
+                };
+            }
+
+            const supabaseForm = document.getElementById('admin-supabase');
+            if (supabaseForm) {
+                supabaseForm.onsubmit = (e) => {
+                    e.preventDefault();
+                    const url = document.getElementById('admin-supabase-url')?.value.trim() || '';
+                    const anonKey = document.getElementById('admin-supabase-key')?.value.trim() || '';
+                    const bucket = document.getElementById('admin-supabase-bucket')?.value.trim() || 'person-media';
+                    if (url && anonKey) {
+                        persistSupabaseConfig({ url, anonKey, bucket });
+                        supabaseClient = initSupabaseClient();
+                        updateInfoUI();
+                        if (currentId) void refreshPersonMedia(currentId);
+                    }
                 };
             }
 
