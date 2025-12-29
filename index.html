@@ -1736,6 +1736,7 @@
                     <div class="admin-actions">
                         <button class="admin-btn" type="submit">Сохранить Supabase</button>
                     </div>
+                    <div id="admin-supabase-status" class="admin-note"></div>
                 </form>
                 ${editForm}
             </div>`;
@@ -2308,7 +2309,8 @@
             const failed = results.filter(r => r.status === 'rejected');
             if (status) {
                 if (failed.length) {
-                    status.textContent = `Загружено: ${successes.length}, ошибка: ${failed.length}`;
+                    const message = failed[0]?.reason?.message || failed[0]?.reason?.toString() || 'ошибка загрузки';
+                    status.textContent = `Загружено: ${successes.length}, ошибка: ${failed.length}. ${message}`;
                 } else {
                     status.textContent = `Загружено: ${successes.length}`;
                 }
@@ -2739,17 +2741,33 @@
 
             const supabaseForm = document.getElementById('admin-supabase');
             if (supabaseForm) {
-                supabaseForm.onsubmit = (e) => {
+                supabaseForm.onsubmit = async (e) => {
                     e.preventDefault();
                     const url = document.getElementById('admin-supabase-url')?.value.trim() || '';
                     const anonKey = document.getElementById('admin-supabase-key')?.value.trim() || '';
                     const bucket = document.getElementById('admin-supabase-bucket')?.value.trim() || 'person-media';
-                    if (url && anonKey) {
-                        persistSupabaseConfig({ url, anonKey, bucket });
-                        supabaseClient = initSupabaseClient();
-                        updateInfoUI();
-                        if (currentId) void refreshPersonMedia(currentId);
+                    const status = document.getElementById('admin-supabase-status');
+                    if (!url || !anonKey) {
+                        if (status) status.textContent = 'Заполните SUPABASE_URL и SUPABASE_ANON_KEY.';
+                        return;
                     }
+                    persistSupabaseConfig({ url, anonKey, bucket });
+                    supabaseClient = initSupabaseClient();
+                    if (!supabaseClient) {
+                        if (status) status.textContent = 'Не удалось инициализировать Supabase клиент.';
+                        return;
+                    }
+                    const { error } = await supabaseClient
+                        .from('person_media')
+                        .select('id')
+                        .limit(1);
+                    if (error) {
+                        if (status) status.textContent = `Ошибка Supabase: ${error.message}`;
+                        return;
+                    }
+                    if (status) status.textContent = 'Supabase подключен.';
+                    updateInfoUI();
+                    if (currentId) void refreshPersonMedia(currentId);
                 };
             }
 
