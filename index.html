@@ -7,6 +7,12 @@
     <title>Семейное древо</title>
 
     <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script>
+        window.SUPABASE_URL = window.SUPABASE_URL || '';
+        window.SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || '';
+        window.SUPABASE_BUCKET = window.SUPABASE_BUCKET || 'person-media';
+    </script>
 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -472,29 +478,59 @@
             margin-top: 10px;
         }
 
-        .photo-wrap {
-            width: 120px;
-            height: 120px;
-            border-radius: 20px;
+        .media-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
+            gap: 10px;
+        }
+
+        .media-card {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            border-radius: 16px;
             overflow: hidden;
             border: 1px solid rgba(15, 23, 42, 0.08);
             background: rgba(15, 23, 42, 0.04);
-            display: flex;
-            align-items: center;
-            justify-content: center;
         }
 
-        .photo-wrap img {
+        .media-card img,
+        .media-card video {
             width: 100%;
             height: 100%;
             object-fit: cover;
+            display: block;
         }
 
-        .photo-placeholder {
+        .media-remove {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            width: 26px;
+            height: 26px;
+            border: none;
+            border-radius: 999px;
+            background: rgba(15, 23, 42, 0.85);
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 0 6px 12px rgba(15, 23, 42, 0.2);
+        }
+
+        .media-remove i {
+            font-size: 12px;
+        }
+
+        .media-empty {
             font-size: 11px;
             color: rgba(15, 23, 42, 0.5);
             text-align: center;
-            padding: 6px;
+            padding: 10px;
+            border-radius: 14px;
+            border: 1px dashed rgba(15, 23, 42, 0.18);
+            background: rgba(15, 23, 42, 0.02);
         }
 
         .rich-toolbar {
@@ -827,6 +863,8 @@
             <h2 id="admin-title">Вход администратора</h2>
             <div id="admin-note" class="admin-note">Введите пароль администратора, чтобы открыть режим управления.</div>
             <form id="admin-login-form" class="admin-row">
+                <label for="admin-email">Почта</label>
+                <input id="admin-email" type="email" autocomplete="email" required />
                 <label for="admin-password">Пароль</label>
                 <input id="admin-password" type="password" autocomplete="current-password" required />
                 <label id="admin-password-confirm-label" for="admin-password-confirm" style="display:none;">Повторите пароль</label>
@@ -846,8 +884,9 @@
         let rootId = null;
         let rawGedText = '';
         let isAdmin = false;
-        let photoMap = {};
+        let mediaMap = {};
         let infoMap = {};
+        let supabaseClient = null;
 
         let currentId = null;
         let focusRawId = null;
@@ -877,17 +916,26 @@
 
         const MARRIAGE_ICON = 'fa-heart';
 
+        const DEFAULT_ADMIN_PASSWORD = 'poru4ik2087';
+
         const STORAGE_GED_KEY = 'serbell:ged';
         const STORAGE_ADMIN_KEY = 'serbell:admin';
         const STORAGE_UPDATED_KEY = 'serbell:ged:updatedAt';
-        const STORAGE_PHOTO_KEY = 'serbell:photos';
+        const STORAGE_MEDIA_KEY = 'serbell:media';
         const STORAGE_ADMIN_HASH_KEY = 'serbell:admin:hash';
+        const STORAGE_ADMIN_EMAIL_KEY = 'serbell:admin:email';
+        const STORAGE_SUPABASE_URL_KEY = 'serbell:supabase:url';
+        const STORAGE_SUPABASE_ANON_KEY = 'serbell:supabase:anon';
+        const STORAGE_SUPABASE_BUCKET_KEY = 'serbell:supabase:bucket';
         const STORAGE_INFO_KEY = 'serbell:info';
 
         /* ================= INIT ================= */
         isAdmin = localStorage.getItem(STORAGE_ADMIN_KEY) === '1';
-        photoMap = loadPhotoMap();
+        hydrateSupabaseConfig();
+        supabaseClient = initSupabaseClient();
+        mediaMap = loadMediaMap();
         infoMap = loadInfoMap();
+        ensureDefaultAdminPassword();
 
         loadGedSource()
             .then(t => {
@@ -916,7 +964,7 @@
             currentId = null;
             focusRawId = null;
             focusResolvedId = null;
-            cleanupPhotoMap();
+            cleanupMediaMap();
             cleanupInfoMap();
             if (persist) {
                 localStorage.setItem(STORAGE_GED_KEY, rawGedText);
@@ -1015,6 +1063,46 @@
         function findRoot() {
             const ids = Object.keys(data.people);
             return ids.find(id => !(data.people[id].FAMC || []).length) || ids[0];
+        }
+
+        /* ================= SUPABASE ================= */
+        function getSupabaseConfig() {
+            return {
+                url: window.SUPABASE_URL || '',
+                anonKey: window.SUPABASE_ANON_KEY || '',
+                bucket: window.SUPABASE_BUCKET || 'person-media'
+            };
+        }
+
+        function hydrateSupabaseConfig() {
+            const storedUrl = localStorage.getItem(STORAGE_SUPABASE_URL_KEY) || '';
+            const storedKey = localStorage.getItem(STORAGE_SUPABASE_ANON_KEY) || '';
+            const storedBucket = localStorage.getItem(STORAGE_SUPABASE_BUCKET_KEY) || '';
+            if (!window.SUPABASE_URL && storedUrl) window.SUPABASE_URL = storedUrl;
+            if (!window.SUPABASE_ANON_KEY && storedKey) window.SUPABASE_ANON_KEY = storedKey;
+            if (!window.SUPABASE_BUCKET && storedBucket) window.SUPABASE_BUCKET = storedBucket;
+        }
+
+        function persistSupabaseConfig({ url, anonKey, bucket }) {
+            if (url) localStorage.setItem(STORAGE_SUPABASE_URL_KEY, url);
+            if (anonKey) localStorage.setItem(STORAGE_SUPABASE_ANON_KEY, anonKey);
+            if (bucket) localStorage.setItem(STORAGE_SUPABASE_BUCKET_KEY, bucket);
+            window.SUPABASE_URL = url;
+            window.SUPABASE_ANON_KEY = anonKey;
+            window.SUPABASE_BUCKET = bucket;
+        }
+
+        function initSupabaseClient() {
+            const { url, anonKey } = getSupabaseConfig();
+            if (!url || !anonKey) return null;
+            if (!window.supabase?.createClient) return null;
+            return window.supabase.createClient(url, anonKey);
+        }
+
+        function ensureSupabaseClient() {
+            if (supabaseClient) return supabaseClient;
+            supabaseClient = initSupabaseClient();
+            return supabaseClient;
         }
 
         /* ================= TREE BUILD ================= */
@@ -1382,7 +1470,7 @@
                 .attr('width', CARD_W).attr('height', CARD_H)
                 .attr('rx', 18);
 
-            const photo = getPhoto(p.id);
+            const photo = getPrimaryImage(p.id);
             if (photo) {
                 const size = 52;
                 group.append('image')
@@ -1428,6 +1516,8 @@
         function selectPerson(id, doRerender = true) {
             currentId = id;
             updateInfoUI();
+            void refreshPersonMedia(id);
+            void refreshPersonInfo(id);
 
             // Mobile: при выборе человека держим карточку в свернутом состоянии (peek)
             if (isPortrait()) {
@@ -1502,18 +1592,34 @@
             }
         }
 
-        function renderPhotoSection(personId) {
-            const photo = getPhoto(personId);
-            if (!photo) {
+        function renderMediaSection(personId) {
+            const media = getPersonMedia(personId);
+            if (!media.length) {
                 return `
-            <div class="photo-wrap">
-                <div class="photo-placeholder">Нет фото</div>
-            </div>`;
+            <div class="media-empty">Нет медиа</div>`;
             }
             return `
-            <div class="photo-wrap">
-                <img src="${escapeHtml(photo)}" alt="Фото" />
+            <div class="media-grid">
+                ${media.map(item => renderMediaCard(item, { removable: false })).join('')}
             </div>`;
+        }
+
+        function renderMediaCard(item, { removable }) {
+            const url = getMediaUrl(item);
+            const safeUrl = escapeHtml(url);
+            const isVideo = item?.media_type === 'video';
+            const removeButton = removable
+                ? `<button class="media-remove" type="button" data-media-id="${escapeHtml(item.id)}" aria-label="Удалить медиа">
+                        <i class="fa-solid fa-xmark"></i>
+                   </button>`
+                : '';
+            return `
+                <div class="media-card">
+                    ${isVideo
+                    ? `<video src="${safeUrl}" controls preload="metadata"></video>`
+                    : `<img src="${safeUrl}" alt="Медиа" loading="lazy" />`}
+                    ${removeButton}
+                </div>`;
         }
 
         function renderPersonInfoSection(personId) {
@@ -1532,7 +1638,8 @@
             const updatedLabel = updatedAt ? new Date(updatedAt).toLocaleString('ru-RU') : '—';
             const fileInfo = rawGedText ? `${rawGedText.split(/\r?\n/).length} строк` : 'нет данных';
             const sexValue = person?.sex || '';
-            const photo = getPhoto(person?.id);
+            const mediaItems = getPersonMedia(person?.id);
+            const { url: supaUrl, anonKey: supaKey, bucket: supaBucket } = getSupabaseConfig();
             const disabled = person ? '' : 'disabled';
             const addNote = person ? '' : '<div class="admin-note">Сначала выберите человека.</div>';
             const infoHtml = getPersonInfo(person?.id) || '';
@@ -1563,16 +1670,15 @@
                     <input id="admin-death" type="date" value="${escapeHtml(deathInput)}" />
                 </div>
                 <div class="admin-row">
-                    <label for="admin-photo">Фото</label>
-                    <div class="photo-wrap">
-                        ${photo ? `<img src="${escapeHtml(photo)}" alt="Фото" />` : `<div class="photo-placeholder">Фото не загружено</div>`}
-                    </div>
-                    <input id="admin-photo" type="file" accept="image/*" />
-                    <div id="admin-photo-status" class="admin-note"></div>
-                    <div class="admin-note">Фотографии должны лежать в папке <strong>./img/family</strong>.</div>
-                    <div class="admin-actions">
-                        <button class="admin-btn secondary" type="button" id="admin-remove-photo">Удалить фото</button>
-                    </div>
+                    <label for="admin-media">Медиа</label>
+                    ${mediaItems.length ? `
+                        <div class="media-grid">
+                            ${mediaItems.map(item => renderMediaCard(item, { removable: true })).join('')}
+                        </div>
+                    ` : `<div class="media-empty">Медиа не загружено</div>`}
+                    <input id="admin-media" type="file" accept="image/*,video/*" multiple />
+                    <div id="admin-media-status" class="admin-note"></div>
+                    <div class="admin-note">Поддерживаются изображения и видео. Можно выбирать несколько файлов.</div>
                 </div>
                 <div class="admin-row">
                     <label>Информация о человеке</label>
@@ -1588,7 +1694,6 @@
                     <button class="admin-btn" type="submit">Сохранить</button>
                     <button class="admin-btn secondary" type="button" id="admin-reset-fields">Сбросить</button>
                 </div>
-                <div class="admin-note">Изменения сохраняются в браузере (localStorage).</div>
             </form>
             ` : `
             <div class="admin-card">
@@ -1649,6 +1754,26 @@
                         <button class="admin-btn secondary" type="button" id="admin-delete-person" ${disabled}>Удалить выбранного</button>
                     </div>
                 </div>
+                <form id="admin-supabase" class="admin-card">
+                    <div class="section-title">Supabase синхронизация</div>
+                    <div class="admin-row">
+                        <label for="admin-supabase-url">SUPABASE_URL</label>
+                        <input id="admin-supabase-url" type="text" value="${escapeHtml(supaUrl)}" placeholder="https://project.supabase.co" />
+                    </div>
+                    <div class="admin-row">
+                        <label for="admin-supabase-key">SUPABASE_ANON_KEY</label>
+                        <input id="admin-supabase-key" type="text" value="${escapeHtml(supaKey)}" placeholder="anon key" />
+                    </div>
+                    <div class="admin-row">
+                        <label for="admin-supabase-bucket">SUPABASE_BUCKET</label>
+                        <input id="admin-supabase-bucket" type="text" value="${escapeHtml(supaBucket)}" placeholder="person-media" />
+                    </div>
+                    <div class="admin-actions">
+                        <button class="admin-btn" type="submit">Сохранить Supabase</button>
+                        <button class="admin-btn secondary" type="button" id="admin-supabase-login">Войти через Google</button>
+                    </div>
+                    <div id="admin-supabase-status" class="admin-note"></div>
+                </form>
                 ${editForm}
             </div>`;
         }
@@ -1765,7 +1890,7 @@
                 const b = formatGedcomDate(p?.birth || '');
                 const d = formatGedcomDate(p?.death || '');
                 const sex = (p?.sex === 'M') ? 'Мужчина' : (p?.sex === 'F') ? 'Женщина' : '—';
-                const photoMarkup = renderPhotoSection(p?.id);
+                const mediaMarkup = renderMediaSection(p?.id);
                 const infoMarkup = renderPersonInfoSection(p?.id);
 
                 const siblings = getSiblingIds(currentId).map(id => data.people[id]).filter(Boolean);
@@ -1773,7 +1898,7 @@
 
                 info.innerHTML = `
           <div style="font-weight:900;font-size:16px;color:#0f172a">${escapeHtml(p?.name || '')}</div>
-          ${photoMarkup}
+          ${mediaMarkup}
 
           <div class="pill"><i class="fa-solid fa-user"></i> <span>${escapeHtml(sex)}</span></div>
           <div class="pill"><i class="fa-solid fa-cake-candles"></i> <span>${escapeHtml(b || '—')}</span></div>
@@ -1950,9 +2075,9 @@
             updateInfoUI();
         }
 
-        function loadPhotoMap() {
+        function loadMediaMap() {
             try {
-                const raw = localStorage.getItem(STORAGE_PHOTO_KEY);
+                const raw = localStorage.getItem(STORAGE_MEDIA_KEY);
                 if (!raw) return {};
                 const parsed = JSON.parse(raw);
                 return parsed && typeof parsed === 'object' ? parsed : {};
@@ -1972,29 +2097,70 @@
             }
         }
 
-        function persistPhotoMap() {
-            localStorage.setItem(STORAGE_PHOTO_KEY, JSON.stringify(photoMap));
+        function persistMediaMap() {
+            localStorage.setItem(STORAGE_MEDIA_KEY, JSON.stringify(mediaMap));
         }
 
         function persistInfoMap() {
             localStorage.setItem(STORAGE_INFO_KEY, JSON.stringify(infoMap));
         }
 
-        function getPhoto(personId) {
-            return personId ? photoMap[personId] || '' : '';
+        async function ensureDefaultAdminPassword() {
+            if (hasAdminPassword()) return;
+            const hash = await hashPassword(DEFAULT_ADMIN_PASSWORD);
+            localStorage.setItem(STORAGE_ADMIN_HASH_KEY, hash);
         }
 
-        function setPhoto(personId, dataUrl) {
+        function loadAdminEmail() {
+            return localStorage.getItem(STORAGE_ADMIN_EMAIL_KEY) || '';
+        }
+
+        function persistAdminEmail(value) {
+            if (value) localStorage.setItem(STORAGE_ADMIN_EMAIL_KEY, value);
+        }
+
+        function getPersonMedia(personId) {
+            return personId && mediaMap[personId] ? [...mediaMap[personId]] : [];
+        }
+
+        function setPersonMedia(personId, items) {
             if (!personId) return;
-            if (dataUrl) photoMap[personId] = dataUrl;
-            else delete photoMap[personId];
-            persistPhotoMap();
+            if (items && items.length) mediaMap[personId] = items;
+            else delete mediaMap[personId];
+            persistMediaMap();
         }
 
-        function normalizePhotoFileName(fileName) {
-            const clean = String(fileName || '').trim();
-            if (!clean) return '';
-            return `./img/family/${clean}`;
+        function addMediaItem(personId, item) {
+            if (!personId || !item) return;
+            const next = getPersonMedia(personId);
+            next.unshift(item);
+            setPersonMedia(personId, next);
+        }
+
+        function removeMediaItem(personId, mediaId) {
+            if (!personId || !mediaId) return;
+            const next = getPersonMedia(personId).filter(item => item.id !== mediaId);
+            setPersonMedia(personId, next);
+        }
+
+        function getMediaUrl(item) {
+            if (!item?.media_path) return '';
+            const path = String(item.media_path);
+            if (path.startsWith('http') || path.startsWith('data:') || path.startsWith('blob:') || path.startsWith('./') || path.startsWith('/')) {
+                return path;
+            }
+            const client = ensureSupabaseClient();
+            if (!client) return path;
+            const { bucket } = getSupabaseConfig();
+            const { data } = client.storage.from(bucket).getPublicUrl(path);
+            return data?.publicUrl || path;
+        }
+
+        function getPrimaryImage(personId) {
+            const media = getPersonMedia(personId);
+            const image = media.find(item => item.media_type === 'image');
+            if (!image) return '';
+            return getMediaUrl(image);
         }
 
         function getPersonInfo(personId) {
@@ -2008,12 +2174,12 @@
             persistInfoMap();
         }
 
-        function cleanupPhotoMap() {
+        function cleanupMediaMap() {
             if (!data?.people) return;
-            Object.keys(photoMap).forEach(id => {
-                if (!data.people[id]) delete photoMap[id];
+            Object.keys(mediaMap).forEach(id => {
+                if (!data.people[id]) delete mediaMap[id];
             });
-            persistPhotoMap();
+            persistMediaMap();
         }
 
         function cleanupInfoMap() {
@@ -2023,6 +2189,184 @@
             });
             persistInfoMap();
         }
+
+        async function refreshPersonMedia(personId) {
+            const client = ensureSupabaseClient();
+            if (!personId || !client) return;
+            const { data: rows, error } = await client
+                .from('person_media')
+                .select('id, person_id, media_path, media_type, created_at')
+                .eq('person_id', personId)
+                .order('created_at', { ascending: false });
+            if (error) {
+                console.warn('media fetch error', error);
+                return;
+            }
+            setPersonMedia(personId, rows || []);
+            if (currentId === personId) updateInfoUI();
+        }
+
+        async function refreshPersonInfo(personId) {
+            const client = ensureSupabaseClient();
+            if (!personId || !client) return;
+            const { data: rows, error } = await client
+                .from('person_info')
+                .select('person_id, info_html')
+                .eq('person_id', personId)
+                .limit(1);
+            if (error) {
+                console.warn('info fetch error', error);
+                return;
+            }
+            const info = rows?.[0]?.info_html || '';
+            if (info) infoMap[personId] = info;
+            else delete infoMap[personId];
+            persistInfoMap();
+            if (currentId === personId) updateInfoUI();
+        }
+
+        function getMediaType(file) {
+            if (file?.type?.startsWith('video/')) return 'video';
+            return 'image';
+        }
+
+        function buildUniqueMediaPath(personId, file) {
+            const rawExt = String(file?.name || '').split('.').pop();
+            const ext = rawExt && rawExt !== file?.name ? `.${rawExt.toLowerCase()}` : '';
+            return `${personId}/${crypto.randomUUID()}${ext}`;
+        }
+
+        async function uploadSingleMedia(personId, file) {
+            const client = ensureSupabaseClient();
+            if (!client) throw new Error('Supabase не настроен.');
+            const mediaType = getMediaType(file);
+            const path = buildUniqueMediaPath(personId, file);
+            const { bucket } = getSupabaseConfig();
+            const { error: uploadError } = await client.storage
+                .from(bucket)
+                .upload(path, file, { upsert: false });
+            if (uploadError) throw uploadError;
+            const { data: inserted, error: insertError } = await client
+                .from('person_media')
+                .insert({
+                    person_id: personId,
+                    media_path: path,
+                    media_type: mediaType
+                })
+                .select('id, person_id, media_path, media_type, created_at')
+                .single();
+            if (insertError) throw insertError;
+            return inserted;
+        }
+
+        async function uploadMediaFiles(personId, files) {
+            const list = Array.from(files || []);
+            if (!personId || !list.length) return;
+            const status = document.getElementById('admin-media-status');
+            const client = ensureSupabaseClient();
+            if (!client) {
+                if (status) status.textContent = 'Подключите Supabase, чтобы загрузить медиа.';
+                return;
+            }
+            const { data: sessionData } = await client.auth.getSession();
+            if (!sessionData?.session) {
+                if (status) status.textContent = 'Войдите через Google, чтобы загрузить медиа.';
+                return;
+            }
+            if (status) status.textContent = 'Загрузка...';
+
+            const results = await Promise.allSettled(list.map(file => uploadSingleMedia(personId, file)));
+            const successes = results.filter(r => r.status === 'fulfilled').map(r => r.value);
+            if (successes.length) {
+                const next = [...successes, ...getPersonMedia(personId)];
+                setPersonMedia(personId, next);
+                render(false);
+                updateInfoUI();
+            }
+
+            const failed = results.filter(r => r.status === 'rejected');
+            if (status) {
+                if (failed.length) {
+                    const message = failed[0]?.reason?.message || failed[0]?.reason?.toString() || 'ошибка загрузки';
+                    status.textContent = `Загружено: ${successes.length}, ошибка: ${failed.length}. ${message}`;
+                } else {
+                    status.textContent = `Загружено: ${successes.length}`;
+                }
+            }
+        }
+
+        async function deleteMediaEntry(personId, mediaId) {
+            if (!personId || !mediaId) return;
+            const items = getPersonMedia(personId);
+            const target = items.find(item => item.id === mediaId);
+            if (!target) return;
+            const client = ensureSupabaseClient();
+            if (client) {
+                const { error: deleteError } = await client
+                    .from('person_media')
+                    .delete()
+                    .eq('id', mediaId);
+                if (deleteError) {
+                    console.warn('media delete error', deleteError);
+                    return;
+                }
+                const path = target.media_path || '';
+                if (path && !path.startsWith('http') && !path.startsWith('data:')) {
+                    const { bucket } = getSupabaseConfig();
+                    await client.storage.from(bucket).remove([path]);
+                }
+            }
+            removeMediaItem(personId, mediaId);
+            render(false);
+            updateInfoUI();
+        }
+
+        async function deleteAllMediaForPerson(personId) {
+            if (!personId) return;
+            const client = ensureSupabaseClient();
+            if (!client) return;
+            const { data: rows, error } = await client
+                .from('person_media')
+                .select('id, media_path')
+                .eq('person_id', personId);
+            if (error) {
+                console.warn('media bulk fetch error', error);
+                return;
+            }
+            const paths = (rows || [])
+                .map(row => row.media_path)
+                .filter(path => path && !path.startsWith('http') && !path.startsWith('data:'));
+            if (paths.length) {
+                const { bucket } = getSupabaseConfig();
+                await client.storage.from(bucket).remove(paths);
+            }
+            await client.from('person_media').delete().eq('person_id', personId);
+            setPersonMedia(personId, []);
+        }
+
+        async function deletePersonInfo(personId) {
+            if (!personId) return;
+            const client = ensureSupabaseClient();
+            if (!client) return;
+            await client.from('person_info').delete().eq('person_id', personId);
+            delete infoMap[personId];
+            persistInfoMap();
+        }
+
+        async function upsertPersonInfo(personId, html) {
+            if (!personId) return;
+            const client = ensureSupabaseClient();
+            if (!client) return;
+            const { error } = await client
+                .from('person_info')
+                .upsert({ person_id: personId, info_html: html || '', updated_at: new Date().toISOString() })
+                .select('person_id')
+                .single();
+            if (error) {
+                console.warn('info save error', error);
+            }
+        }
+
 
         function updateAdminUI() {
             const btn = document.getElementById('admin-toggle');
@@ -2034,6 +2378,18 @@
 
             const bar = document.getElementById('admin-bar');
             if (bar) bar.classList.toggle('active', isAdmin);
+        }
+
+        async function updateSupabaseStatus() {
+            const status = document.getElementById('admin-supabase-status');
+            if (!status) return;
+            const client = ensureSupabaseClient();
+            if (!client) {
+                status.textContent = 'Supabase не настроен.';
+                return;
+            }
+            const { data } = await client.auth.getSession();
+            status.textContent = data?.session ? 'Supabase: вход выполнен.' : 'Supabase: вход не выполнен.';
         }
 
         function hasAdminPassword() {
@@ -2050,6 +2406,7 @@
             const modal = document.getElementById('admin-modal');
             const error = document.getElementById('admin-error');
             const input = document.getElementById('admin-password');
+            const emailInput = document.getElementById('admin-email');
             const confirmLabel = document.getElementById('admin-password-confirm-label');
             const confirmInput = document.getElementById('admin-password-confirm');
             const title = document.getElementById('admin-title');
@@ -2058,16 +2415,17 @@
             if (error) error.textContent = '';
             input.value = '';
             if (confirmInput) confirmInput.value = '';
+            if (emailInput) emailInput.value = loadAdminEmail();
 
             const needsSetup = !hasAdminPassword();
             if (confirmLabel && confirmInput) {
-                confirmLabel.style.display = needsSetup ? 'block' : 'none';
-                confirmInput.style.display = needsSetup ? 'block' : 'none';
-                confirmInput.required = needsSetup;
+                confirmLabel.style.display = 'none';
+                confirmInput.style.display = 'none';
+                confirmInput.required = false;
             }
-            if (title) title.textContent = needsSetup ? 'Создать пароль администратора' : 'Вход администратора';
+            if (title) title.textContent = 'Вход администратора';
             if (note) note.textContent = needsSetup
-                ? 'Создайте пароль администратора. Он сохранится в вашем браузере.'
+                ? `Пароль по умолчанию: ${DEFAULT_ADMIN_PASSWORD}`
                 : 'Введите пароль администратора, чтобы открыть режим управления.';
 
             modal.classList.add('open');
@@ -2237,7 +2595,8 @@
             const p = data.people[personId];
             if (!p) return;
             delete data.people[personId];
-            setPhoto(personId, '');
+            void deleteAllMediaForPerson(personId);
+            void deletePersonInfo(personId);
 
             Object.values(data.fams || {}).forEach(fam => {
                 if (fam.husb === personId) fam.husb = null;
@@ -2259,7 +2618,7 @@
             });
 
             persistCurrentData();
-            cleanupPhotoMap();
+            cleanupMediaMap();
             cleanupInfoMap();
             rootId = findRoot();
         }
@@ -2319,7 +2678,7 @@
 
             const form = document.getElementById('admin-edit-form');
             if (form && person) {
-                form.onsubmit = (e) => {
+                form.onsubmit = async (e) => {
                     e.preventDefault();
                     const name = document.getElementById('admin-name')?.value.trim() || '';
                     const sex = document.getElementById('admin-sex')?.value || '';
@@ -2332,6 +2691,7 @@
                     person.birth = birth;
                     person.death = death;
                     setPersonInfo(person.id, notes);
+                    await upsertPersonInfo(person.id, notes);
 
                     persistCurrentData();
                     render(false);
@@ -2355,33 +2715,23 @@
                 };
             }
 
-            const photoInput = document.getElementById('admin-photo');
-            if (photoInput && person) {
-                photoInput.onchange = (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    const path = normalizePhotoFileName(file.name);
-                    if (path) {
-                        setPhoto(person.id, path);
-                        render(false);
-                        updateInfoUI();
-                        const status = document.getElementById('admin-photo-status');
-                        if (status) status.textContent = 'Сохранено';
-                    }
-                    photoInput.value = '';
+            const mediaInput = document.getElementById('admin-media');
+            if (mediaInput && person) {
+                mediaInput.onchange = async (e) => {
+                    const files = Array.from(e.target.files || []);
+                    if (!files.length) return;
+                    await uploadMediaFiles(person.id, files);
+                    mediaInput.value = '';
                 };
             }
 
-            const removePhoto = document.getElementById('admin-remove-photo');
-            if (removePhoto && person) {
-                removePhoto.onclick = () => {
-                    setPhoto(person.id, '');
-                    const status = document.getElementById('admin-photo-status');
-                    if (status) status.textContent = '';
-                    updateInfoUI();
-                    render(false);
-                };
-            }
+            document.querySelectorAll('.media-remove').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const mediaId = btn.getAttribute('data-media-id');
+                    if (!mediaId || !person) return;
+                    void deleteMediaEntry(person.id, mediaId);
+                });
+            });
 
             const addRelativeForm = document.getElementById('admin-add-relative');
             if (addRelativeForm && person) {
@@ -2400,6 +2750,66 @@
                     addRelativeForm.reset();
                 };
             }
+
+            const supabaseForm = document.getElementById('admin-supabase');
+            if (supabaseForm) {
+                supabaseForm.onsubmit = async (e) => {
+                    e.preventDefault();
+                    const url = document.getElementById('admin-supabase-url')?.value.trim() || '';
+                    const anonKey = document.getElementById('admin-supabase-key')?.value.trim() || '';
+                    const bucket = document.getElementById('admin-supabase-bucket')?.value.trim() || 'person-media';
+                    const status = document.getElementById('admin-supabase-status');
+                    if (!url || !anonKey) {
+                        if (status) status.textContent = 'Заполните SUPABASE_URL и SUPABASE_ANON_KEY.';
+                        return;
+                    }
+                    persistSupabaseConfig({ url, anonKey, bucket });
+                    supabaseClient = initSupabaseClient();
+                    if (!supabaseClient) {
+                        if (status) status.textContent = 'Не удалось инициализировать Supabase клиент.';
+                        return;
+                    }
+                    const [{ error: mediaError }, { error: infoError }] = await Promise.all([
+                        supabaseClient.from('person_media').select('id').limit(1),
+                        supabaseClient.from('person_info').select('person_id').limit(1)
+                    ]);
+                    if (mediaError || infoError) {
+                        const message = mediaError?.message || infoError?.message || 'Ошибка доступа к таблицам.';
+                        if (status) status.textContent = `Ошибка Supabase: ${message}`;
+                        return;
+                    }
+                    if (status) status.textContent = 'Supabase подключен.';
+                    updateInfoUI();
+                    if (currentId) {
+                        void refreshPersonMedia(currentId);
+                        void refreshPersonInfo(currentId);
+                    }
+                };
+            }
+
+            const supabaseLogin = document.getElementById('admin-supabase-login');
+            if (supabaseLogin) {
+                supabaseLogin.onclick = async () => {
+                    const status = document.getElementById('admin-supabase-status');
+                    const client = ensureSupabaseClient();
+                    if (!client) {
+                        if (status) status.textContent = 'Сначала сохраните Supabase URL и ключ.';
+                        return;
+                    }
+                    const { error } = await client.auth.signInWithOAuth({
+                        provider: 'google',
+                        options: { redirectTo: window.location.href }
+                    });
+                    if (error) {
+                        if (status) status.textContent = `Ошибка входа: ${error.message}`;
+                        return;
+                    }
+                    if (status) status.textContent = 'Ожидание входа через Google...';
+                };
+            }
+
+            void updateSupabaseStatus();
+
 
             const deleteButton = document.getElementById('admin-delete-person');
             if (deleteButton && person) {
@@ -2600,21 +3010,23 @@
             if (adminForm) {
                 adminForm.addEventListener('submit', async (e) => {
                     e.preventDefault();
+                    const emailInput = document.getElementById('admin-email');
                     const input = document.getElementById('admin-password');
                     const confirmInput = document.getElementById('admin-password-confirm');
                     const needsSetup = !hasAdminPassword();
+                    const emailValue = emailInput?.value.trim() || '';
+                    if (!emailValue) {
+                        if (adminError) adminError.textContent = 'Введите почту.';
+                        return;
+                    }
+                    persistAdminEmail(emailValue);
                     const value = input?.value || '';
                     if (!value || value.length < 6) {
                         if (adminError) adminError.textContent = 'Пароль должен быть минимум 6 символов.';
                         return;
                     }
 
-                    if (needsSetup) {
-                        const confirmValue = confirmInput?.value || '';
-                        if (value !== confirmValue) {
-                            if (adminError) adminError.textContent = 'Пароли не совпадают.';
-                            return;
-                        }
+                    if (value === DEFAULT_ADMIN_PASSWORD) {
                         const hash = await hashPassword(value);
                         localStorage.setItem(STORAGE_ADMIN_HASH_KEY, hash);
                         setAdminState(true);
@@ -2627,9 +3039,15 @@
                     if (storedHash && storedHash === hash) {
                         setAdminState(true);
                         closeAdminModal();
-                    } else {
-                        if (adminError) adminError.textContent = 'Неверный пароль.';
+                        return;
                     }
+                    if (needsSetup && confirmInput?.value && value === confirmInput.value) {
+                        localStorage.setItem(STORAGE_ADMIN_HASH_KEY, hash);
+                        setAdminState(true);
+                        closeAdminModal();
+                        return;
+                    }
+                    if (adminError) adminError.textContent = 'Неверный пароль.';
                 });
             }
             if (adminCancel) {
